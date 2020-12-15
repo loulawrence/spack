@@ -38,3 +38,5 @@ lib/spack/spack/test/.cache
 # VSCode files
 .vscode
 .devcontainer
+.vs
+.VSInheritEnvironments.txt
