@@ -14,6 +14,8 @@ import spack.util.string
 
 if _platform != "win32":
     import fcntl
+else:
+    import win32con, win32file, pywintypes
 
 __all__ = ['Lock', 'LockTransaction', 'WriteTransaction', 'ReadTransaction',
            'LockError', 'LockTimeoutError',
@@ -100,7 +102,6 @@ class Lock(object):
             self.LOCK_SH = None
             self.LOCK_NB = None
         elif _platform == "win32":
-            import win32con, win32file, pywintypes
             self.LOCK_EX = win32con.LOCKFILE_EXCLUSIVE_LOCK
             self.LOCK_SH = 0 # the default
             self.LOCK_NB = win32con.LOCKFILE_FAIL_IMMEDIATELY
@@ -227,7 +228,7 @@ class Lock(object):
             if _platform == "win32":
                 #TODO
                 hfile = win32file._get_osfhandle((self._file).fileno())
-                win32file.LockFileEx(hfile, LOCK_NB, self._start,
+                win32file.LockFileEx(hfile, self.LOCK_NB, self._start,
                                       (self._start+self._length),
                                       self.win_overlapped)
             else:
