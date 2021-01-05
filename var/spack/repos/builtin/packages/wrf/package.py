@@ -38,7 +38,6 @@ def setNonBlocking(fd):
         fcntl(fd, F_SETFL, flags)
 
 
-
 def collect_platform_options(stdoutpipe):
     # Attempt to parse to collect options
     optiondict = {}

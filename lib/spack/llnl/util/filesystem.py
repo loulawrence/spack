@@ -11,10 +11,6 @@ from sys import platform as _platform
 if _platform != "win32":
     import grp
     import pwd
-else:
-    # grp and pwd are not avaible on Windows
-    grp = None
-    pwd = None
 
 
 import itertools
@@ -297,7 +293,7 @@ def group_ids(uid=None):
     Returns:
         (list of int): gids of groups the user is a member of
     """
-    if grp is None:
+    if _platform == 'win32':
         tty.warn("Function is not supported on Windows")
         return []
 
@@ -309,7 +305,7 @@ def group_ids(uid=None):
 
 def chgrp(path, group):
     """Implement the bash chgrp function on a single path"""
-    if grp is None:
+    if _platform == 'win32':
         tty.warn("Function is not supported on Windows")
         return
 
@@ -774,7 +770,7 @@ def open_if_filename(str_or_file, mode='r'):
 def touch(path):
     """Creates an empty file at the specified path."""
     if _platform == 'win32':
-        perms = (os.O_WRONLY | os.O_CREAT )
+        perms = (os.O_WRONLY | os.O_CREAT)
     else:
         perms = (os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_NOCTTY)
     fd = None

@@ -230,8 +230,7 @@ class Lock(object):
             if _platform == "win32":
                 hfile = win32file._get_osfhandle((self._file).fileno())
                 win32file.LockFileEx(hfile, self.LOCK_NB, self._start,
-                                      (self._start+self._length),
-                                      self.win_overlapped)
+                                     (self._start + self._length), self.win_overlapped)
             else:
                 fcntl.lockf(self._file, op | self.LOCK_NB,
                             self._length, self._start, os.SEEK_SET)
@@ -314,7 +313,7 @@ class Lock(object):
                                    self.win_overlapped)
         else:
             fcntl.lockf(self._file, self.LOCK_UN,
-                    self._length, self._start, os.SEEK_SET)
+                        self._length, self._start, os.SEEK_SET)
 
         self._file.close()
         self._file = None

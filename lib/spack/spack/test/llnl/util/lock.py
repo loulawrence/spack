@@ -1353,7 +1353,7 @@ def test_poll_lock_exception(tmpdir, monkeypatch, err_num, err_msg):
         if _platform == 'win32':
             # TODO
             monkeypatch.setattr(win32file, 'LockFileEx', _lockf)
-    
+
         else:
             monkeypatch.setattr(fcntl, 'lockf', _lockf)
 
