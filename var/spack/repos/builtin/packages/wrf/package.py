@@ -14,7 +14,7 @@ from llnl.util import tty
 import re
 
 from sys import platform as _platform
-if (_platform != win32):
+if _platform != 'win32':
     from os import O_NONBLOCK, rename
     from fcntl import fcntl, F_GETFL, F_SETFL
 else:
