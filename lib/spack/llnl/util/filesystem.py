@@ -8,13 +8,14 @@ import hashlib
 import glob
 
 from sys import platform as _platform
-if _platform == "win32":
+if _platform != "win32":
+    import grp
+    import pwd
+else:
     # grp and pwd are not avaible on Windows
     grp = None
     pwd = None
-else:
-    import grp
-    import pwd
+
 
 import itertools
 import numbers

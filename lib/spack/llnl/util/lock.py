@@ -15,7 +15,9 @@ import spack.util.string
 if _platform != "win32":
     import fcntl
 else:
-    import win32con, win32file, pywintypes
+    import win32con
+    import win32file
+    import pywintypes
 
 __all__ = ['Lock', 'LockTransaction', 'WriteTransaction', 'ReadTransaction',
            'LockError', 'LockTimeoutError',
@@ -103,7 +105,7 @@ class Lock(object):
             self.LOCK_NB = None
         elif _platform == "win32":
             self.LOCK_EX = win32con.LOCKFILE_EXCLUSIVE_LOCK
-            self.LOCK_SH = 0 # the default
+            self.LOCK_SH = 0
             self.LOCK_NB = win32con.LOCKFILE_FAIL_IMMEDIATELY
             self.win_overlapped = pywintypes.OVERLAPPED()
         else:
@@ -226,7 +228,6 @@ class Lock(object):
         try:
             # Try to get the lock (will raise if not available.)
             if _platform == "win32":
-                #TODO
                 hfile = win32file._get_osfhandle((self._file).fileno())
                 win32file.LockFileEx(hfile, self.LOCK_NB, self._start,
                                       (self._start+self._length),
@@ -307,10 +308,9 @@ class Lock(object):
 
         """
         if _platform == "win32":
-            #TODO
             hfile = win32file._get_osfhandle((self._file).fileno())
             win32file.UnlockFileEx(hfile, self._start,
-                                   (self._start+self._length),
+                                   (self._start + self._length),
                                    self.win_overlapped)
         else:
             fcntl.lockf(self._file, self.LOCK_UN,

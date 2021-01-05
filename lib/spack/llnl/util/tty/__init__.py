@@ -20,8 +20,6 @@ from sys import platform as _platform
 if _platform != "win32":
     import fcntl
     import termios
-else:
-    import shutil
 
 from llnl.util.tty.color import cprint, cwrite, cescape, clen
 
@@ -361,8 +359,7 @@ def terminal_size():
 
         return int(rc[0]), int(rc[1])
     else:
-        try:
-            return shutil.get_terminal_size()
-        except:
-            # Windows, Python < 3.3
-            return 0, 0
+        # return shutil.get_terminal_size()
+        # TODO: find python 2 compatible module to get terminal size; shutil only works 3.3+
+        rc = (os.environ.get('LINES', 25), os.environ.get('COLUMNS', 80))
+        return int(rc[0]), int(rc[1])

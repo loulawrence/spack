@@ -61,11 +61,13 @@ import llnl.util.multiproc as mp
 from llnl.util.filesystem import touch
 
 if _platform == "win32":
-    import win32con, win32file, pywintypes
+    import win32con
+    import win32file
+    import pywintypes
     LOCK_EX = win32con.LOCKFILE_EXCLUSIVE_LOCK
-    LOCK_SH = 0 # the default
+    LOCK_SH = 0
     LOCK_NB = win32con.LOCKFILE_FAIL_IMMEDIATELY
-    __overlapped = pywintypes.OVERLAPPED(  )
+    __overlapped = pywintypes.OVERLAPPED()
 else:
     import fcntl
 
@@ -1349,13 +1351,9 @@ def test_poll_lock_exception(tmpdir, monkeypatch, err_num, err_msg):
 
         touch(lockfile)
         if _platform == 'win32':
-            #TODO
+            # TODO
             monkeypatch.setattr(win32file, 'LockFileEx', _lockf)
-            #if err_num in [errno.EAGAIN, errno.EACCES]:
-             #   assert not lock._poll_lock(LOCK_EX)
-            #else:
-             #   with pytest.raises(IOError, match=err_msg):
-              #      lock._poll_lock(LOCK_EX)
+    
         else:
             monkeypatch.setattr(fcntl, 'lockf', _lockf)
 
