@@ -7,6 +7,7 @@
 __pycache__/
 *.pyc
 /opt
+out
 *~
 .DS_Store
 .idea
@@ -39,10 +40,9 @@ lib/spack/spack/test/.cache
 .vscode
 .devcontainer
 .vs
-.VSInheritEnvironments.txt
-/var/spack/repos/builtin/packages/pythia6/out/build/x64-Debug (default)/.cmake/api/v1/query/client-MicrosoftVS/query.json
-/var/spack/repos/builtin/packages/pythia6/out/build/x64-Debug (default)/CMakeFiles/3.18.20081302-MSVC_2
-/var/spack/repos/builtin/packages/pythia6/out/build/x64-Debug (default)/CMakeFiles
-/var/spack/repos/builtin/packages/tinyxml/out/build/x64-Debug (default)/CMakeFiles
-/var/spack/repos/builtin/packages/pythia6/out/build/x64-Debug (default)
-/var/spack/repos/builtin/packages/tinyxml/out/build/x64-Debug (default)
+VSInheritEnvironments.txt
+
+# CMake Files
+.cmake
+CMakeFiles
+CMakeCache.txt

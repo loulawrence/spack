@@ -1,0 +1,9 @@
+@ECHO OFF
+pushd %~dp0
+set SPACK_ROOT=%CD%
+popd
+set PATH=%SPACK_ROOT%\installer\;%SPACK_ROOT%\Python-@PYTHON_VERSION@\;%PATH%
+"%SPACK_ROOT%\Python-@PYTHON_VERSION@\python.exe" "%SPACK_ROOT%\installer\haspywin.py"
+
+
+%comspec% /k "echo ********************************************************************** & echo ** Spack Package Manager & echo ** ^(c^) 2021 Lawrence Livermore National Laboratories & echo **********************************************************************"
