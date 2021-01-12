@@ -41,6 +41,25 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/installer/" DESTINATION "installe
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lib/" DESTINATION "lib")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/share/" DESTINATION "share")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/var/" DESTINATION "var")
+install(FILES .codecov.yml 
+			  .coveragerc 
+			  .dockerignore 
+			  .flake8 
+			  .flake8_packages
+			  .gitattributes
+			  .gitignore
+			  .mailmap
+			  .readthedocs.yml 
+			  CHANGELOG.md 
+			  CMakeLists.txt 
+			  COPYRIGHT 
+			  LICENSE-APACHE 
+			  LICENSE-MIT
+			  NOTICE 
+			  pytest.ini 
+			  README.md
+			  installer/spack-logo.ico
+			  DESTINATION .)
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Python-${PYTHON_VERSION}-win64/" DESTINATION "Python-${PYTHON_VERSION}")
 
 # CPACK Installer Instructions
