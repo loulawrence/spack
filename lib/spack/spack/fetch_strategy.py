@@ -29,6 +29,11 @@ import os.path
 import re
 import shutil
 import sys
+import urllib
+try:
+    import urllib.request as urllib2
+except ImportError:
+    import urllib2
 
 import llnl.util.tty as tty
 import six
@@ -270,10 +275,7 @@ class URLFetchStrategy(FetchStrategy):
     @property
     def curl(self):
         if not self._curl:
-            try:
-                self._curl = which('curl', required=True)
-            except CommandNotFoundError as exc:
-                tty.error(str(exc))
+            self._curl = which('curl')
         return self._curl
 
     def source_id(self):
@@ -321,11 +323,18 @@ class URLFetchStrategy(FetchStrategy):
     def _existing_url(self, url):
         tty.debug('Checking existence of {0}'.format(url))
         curl = self.curl
-        # Telling curl to fetch the first byte (-r 0-0) is supposed to be
-        # portable.
-        curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
-        _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
-        return curl.returncode == 0
+        if curl == None:
+            print("cURL was not found on your system. Spack will use urllib instead.")
+            req = urllib2.Request(url)
+            req.headers['Range'] = 'bytes=%s-%s' % (0,0)
+            _ = urllib2.urlopen(req)
+            return _.getcode() == 0
+        else:
+            # Telling curl to fetch the first byte (-r 0-0) is supposed to be
+            # portable.
+            curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
+            _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
+            return curl.returncode == 0
 
     def _fetch_from_url(self, url):
         save_file = None
@@ -341,75 +350,84 @@ class URLFetchStrategy(FetchStrategy):
                          partial_file]  # use a .part file
         else:
             save_args = ['-O']
-
-        curl_args = save_args + [
-            '-f',  # fail on >400 errors
-            '-D',
-            '-',  # print out HTML headers
-            '-L',  # resolve 3xx redirects
-            url,
-        ]
-
-        if not spack.config.get('config:verify_ssl'):
-            curl_args.append('-k')
-
-        if sys.stdout.isatty() and tty.msg_enabled():
-            curl_args.append('-#')  # status bar when using a tty
-        else:
-            curl_args.append('-sS')  # show errors if fail
-
-        connect_timeout = spack.config.get('config:connect_timeout', 10)
-
-        if self.extra_options:
-            cookie = self.extra_options.get('cookie')
-            if cookie:
-                curl_args.append('-j')  # junk cookies
-                curl_args.append('-b')  # specify cookie
-                curl_args.append(cookie)
-
-            timeout = self.extra_options.get('timeout')
-            if timeout:
-                connect_timeout = max(connect_timeout, int(timeout))
-
-        if connect_timeout > 0:
-            # Timeout if can't establish a connection after n sec.
-            curl_args.extend(['--connect-timeout', str(connect_timeout)])
-
-        # Run curl but grab the mime type from the http headers
         curl = self.curl
-        with working_dir(self.stage.path):
-            headers = curl(*curl_args, output=str, fail_on_error=False)
-
-        if curl.returncode != 0:
-            # clean up archive on failure.
-            if self.archive_file:
-                os.remove(self.archive_file)
-
-            if partial_file and os.path.exists(partial_file):
-                os.remove(partial_file)
-
-            if curl.returncode == 22:
-                # This is a 404.  Curl will print the error.
-                raise FailedDownloadError(
-                    url, "URL %s was not found!" % url)
-
-            elif curl.returncode == 60:
-                # This is a certificate error.  Suggest spack -k
-                raise FailedDownloadError(
-                    url,
-                    "Curl was unable to fetch due to invalid certificate. "
-                    "This is either an attack, or your cluster's SSL "
-                    "configuration is bad.  If you believe your SSL "
-                    "configuration is bad, you can try running spack -k, "
-                    "which will not check SSL certificates."
-                    "Use this at your own risk.")
-
+        if curl == None:
+            print("cURL was not found on your system. Spack will use urllib instead.")
+            req = urllib2.Request(url)
+            req.headers['Range'] = 'bytes=%s-%s'
+            _ = urllib2.urlopen(req)
+            if sys.version_info[0] > 3:
+                # python 3 : urllib
             else:
-                # This is some other curl error.  Curl will print the
-                # error, but print a spack message too
-                raise FailedDownloadError(
-                    url,
-                    "Curl failed with error %d" % curl.returncode)
+                # python 2: urllib + urllib2
+        else:
+            curl_args = save_args + [
+                '-f',  # fail on >400 errors
+                '-D',
+                '-',  # print out HTML headers
+                '-L',  # resolve 3xx redirects
+                url,
+            ]
+
+            if not spack.config.get('config:verify_ssl'):
+                curl_args.append('-k')
+
+            if sys.stdout.isatty() and tty.msg_enabled():
+                curl_args.append('-#')  # status bar when using a tty
+            else:
+                curl_args.append('-sS')  # show errors if fail
+
+            connect_timeout = spack.config.get('config:connect_timeout', 10)
+
+            if self.extra_options:
+                cookie = self.extra_options.get('cookie')
+                if cookie:
+                    curl_args.append('-j')  # junk cookies
+                    curl_args.append('-b')  # specify cookie
+                    curl_args.append(cookie)
+
+                timeout = self.extra_options.get('timeout')
+                if timeout:
+                    connect_timeout = max(connect_timeout, int(timeout))
+
+            if connect_timeout > 0:
+                # Timeout if can't establish a connection after n sec.
+                curl_args.extend(['--connect-timeout', str(connect_timeout)])
+
+            # Run curl but grab the mime type from the http headers
+            with working_dir(self.stage.path):
+                headers = curl(*curl_args, output=str, fail_on_error=False)
+
+            if curl.returncode != 0:
+                # clean up archive on failure.
+                if self.archive_file:
+                    os.remove(self.archive_file)
+
+                if partial_file and os.path.exists(partial_file):
+                    os.remove(partial_file)
+
+                if curl.returncode == 22:
+                    # This is a 404.  Curl will print the error.
+                    raise FailedDownloadError(
+                        url, "URL %s was not found!" % url)
+
+                elif curl.returncode == 60:
+                    # This is a certificate error.  Suggest spack -k
+                    raise FailedDownloadError(
+                        url,
+                        "Curl was unable to fetch due to invalid certificate. "
+                        "This is either an attack, or your cluster's SSL "
+                        "configuration is bad.  If you believe your SSL "
+                        "configuration is bad, you can try running spack -k, "
+                        "which will not check SSL certificates."
+                        "Use this at your own risk.")
+
+                else:
+                    # This is some other curl error.  Curl will print the
+                    # error, but print a spack message too
+                    raise FailedDownloadError(
+                        url,
+                        "Curl failed with error %d" % curl.returncode)
 
         # Check if we somehow got an HTML file rather than the archive we
         # asked for.  We only look at the last content type, to handle

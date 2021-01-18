@@ -15,7 +15,7 @@
 		</DirectoryRef>
 	</Fragment>
 	<Fragment>
-		<Icon Id="icon.ico" SourceFile="spack-logo.ico"/>
+		<Icon Id="icon.ico" SourceFile="installer/spack-logo.ico"/>
 		<Property Id="ARPPRODUCTICON" Value="icon.ico" />
 	</Fragment>
 	<Fragment>
@@ -30,7 +30,7 @@
 							  Description="Spack package manager"
 							  WorkingDirectory="INSTALL_ROOT"
 							  Icon="icon1.ico">
-						<Icon Id="icon1.ico" SourceFile="spack-logo.ico" />
+						<Icon Id="icon1.ico" SourceFile="installer/spack-logo.ico" />
 					</Shortcut>
 					<Shortcut Id="startMenuShotcut" 
 							  Directory="ApplicationProgramsFolder"
@@ -39,7 +39,7 @@
 							  Icon="icon2.ico" 
 							  IconIndex="0" 
 							  Advertise="yes">
-						<Icon Id="icon2.ico" SourceFile="spack-logo.ico" />
+						<Icon Id="icon2.ico" SourceFile="installer/spack-logo.ico" />
 					</Shortcut>
 			</File>
 			</Component>
