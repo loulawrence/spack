@@ -29,11 +29,14 @@ import os.path
 import re
 import shutil
 import sys
-from typing import Optional, List  # novm
+import socket
+import six.moves.urllib.parse as urllib_parse
+from six.moves.urllib.request import urlopen, Request
+from six.moves.urllib.error import HTTPError
+
 
 import llnl.util.tty as tty
 import six
-import six.moves.urllib.parse as urllib_parse
 import spack.config
 import spack.error
 import spack.util.crypto as crypto
@@ -93,12 +96,11 @@ class FetchStrategy(object):
     #: The URL attribute must be specified either at the package class
     #: level, or as a keyword argument to ``version()``.  It is used to
     #: distinguish fetchers for different versions in the package DSL.
-    url_attr = None  # type: Optional[str]
+    url_attr = None
 
     #: Optional attributes can be used to distinguish fetchers when :
     #: classes have multiple ``url_attrs`` at the top-level.
-    # optional attributes in version() args.
-    optional_attrs = []  # type: List[str]
+    optional_attrs = []  # optional attributes in version() args.
 
     def __init__(self, **kwargs):
         # The stage is initialized late, so that fetch strategies can be
@@ -272,10 +274,7 @@ class URLFetchStrategy(FetchStrategy):
     @property
     def curl(self):
         if not self._curl:
-            try:
-                self._curl = which('curl', required=True)
-            except CommandNotFoundError as exc:
-                tty.error(str(exc))
+            self._curl = which('curl')
         return self._curl
 
     def source_id(self):
@@ -323,11 +322,18 @@ class URLFetchStrategy(FetchStrategy):
     def _existing_url(self, url):
         tty.debug('Checking existence of {0}'.format(url))
         curl = self.curl
-        # Telling curl to fetch the first byte (-r 0-0) is supposed to be
-        # portable.
-        curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
-        _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
-        return curl.returncode == 0
+        if curl == None:
+            print("cURL was not found on your system. Spack will use urllib instead.")
+            req = Request(url)
+            req.headers['Range'] = 'bytes=%s-%s' % (0,0)
+            _ = urlopen(req)
+            return _.getcode() == 0
+        else:
+            # Telling curl to fetch the first byte (-r 0-0) is supposed to be
+            # portable.
+            curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
+            _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
+            return curl.returncode == 0
 
     def _fetch_from_url(self, url):
         save_file = None
@@ -379,39 +385,67 @@ class URLFetchStrategy(FetchStrategy):
 
         # Run curl but grab the mime type from the http headers
         curl = self.curl
-        with working_dir(self.stage.path):
-            headers = curl(*curl_args, output=str, fail_on_error=False)
+        if curl == None:
+            print("cURL was not found on your system. Spack will use urllib instead.")
+            req = Request(url)
+            # req.headers[''] = ''
+            try:
+                _ = urlopen(req, timeout=connect_timeout)
+            except socket.timeout:
+                raise TimeoutError(url, 'Connection timed out')
+            except HTTPError as e:
+                if (e.code == 404):
+                    raise FailedDownloadError(url, "URL %s was not found!" % url)
+                elif (e.code == 400):
+                    raise FailedDownloadError(url, 
+                        "Urllib was unable to fetch due to invalid certificate. "
+                        "This is either an attack, or your cluster's SSL "
+                        "configuration is bad.  If you believe your SSL "
+                        "configuration is bad, you can try running spack -k, "
+                        "which will not check SSL certificates."
+                        "Use this at your own risk.")
+                else:
+                    raise FailedDownloadError(url, "Urllib fetch failed with error code %d" % e.code)
+                # clean up archive on failure.
+                if self.archive_file:
+                    os.remove(self.archive_file)
+                if partial_file and os.path.exists(partial_file):
+                    os.remove(partial_file)
+            headers = _.read()
+        else: 
+            with working_dir(self.stage.path):
+                headers = curl(*curl_args, output=str, fail_on_error=False)
 
-        if curl.returncode != 0:
-            # clean up archive on failure.
-            if self.archive_file:
-                os.remove(self.archive_file)
+            if curl.returncode != 0:
+                # clean up archive on failure.
+                if self.archive_file:
+                    os.remove(self.archive_file)
 
-            if partial_file and os.path.exists(partial_file):
-                os.remove(partial_file)
+                if partial_file and os.path.exists(partial_file):
+                    os.remove(partial_file)
 
-            if curl.returncode == 22:
-                # This is a 404.  Curl will print the error.
-                raise FailedDownloadError(
-                    url, "URL %s was not found!" % url)
+                if curl.returncode == 22:
+                    # This is a 404.  Curl will print the error.
+                    raise FailedDownloadError(
+                        url, "URL %s was not found!" % url)
 
-            elif curl.returncode == 60:
-                # This is a certificate error.  Suggest spack -k
-                raise FailedDownloadError(
-                    url,
-                    "Curl was unable to fetch due to invalid certificate. "
-                    "This is either an attack, or your cluster's SSL "
-                    "configuration is bad.  If you believe your SSL "
-                    "configuration is bad, you can try running spack -k, "
-                    "which will not check SSL certificates."
-                    "Use this at your own risk.")
+                elif curl.returncode == 60:
+                    # This is a certificate error.  Suggest spack -k
+                    raise FailedDownloadError(
+                        url,
+                        "Curl was unable to fetch due to invalid certificate. "
+                        "This is either an attack, or your cluster's SSL "
+                        "configuration is bad.  If you believe your SSL "
+                        "configuration is bad, you can try running spack -k, "
+                        "which will not check SSL certificates."
+                        "Use this at your own risk.")
 
-            else:
-                # This is some other curl error.  Curl will print the
-                # error, but print a spack message too
-                raise FailedDownloadError(
-                    url,
-                    "Curl failed with error %d" % curl.returncode)
+                else:
+                    # This is some other curl error.  Curl will print the
+                    # error, but print a spack message too
+                    raise FailedDownloadError(
+                        url,
+                        "Curl failed with error %d" % curl.returncode)
 
         # Check if we somehow got an HTML file rather than the archive we
         # asked for.  We only look at the last content type, to handle
@@ -422,7 +456,7 @@ class URLFetchStrategy(FetchStrategy):
             warn_content_type_mismatch(self.archive_file or "the archive")
         return partial_file, save_file
 
-    @property  # type: ignore # decorated properties unsupported in mypy
+    @property
     @_needs_stage
     def archive_file(self):
         """Path to the source archive within this stage directory."""
