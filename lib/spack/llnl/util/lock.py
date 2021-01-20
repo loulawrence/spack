@@ -4,22 +4,25 @@
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
 
 import os
-import fcntl
 import errno
 import time
 import socket
 from datetime import datetime
-
+from sys import platform as _platform
 import llnl.util.tty as tty
 import spack.util.string
 
+if _platform != "win32":
+    import fcntl
+else:
+    import win32con
+    import win32file
+    import pywintypes
 
 __all__ = ['Lock', 'LockTransaction', 'WriteTransaction', 'ReadTransaction',
            'LockError', 'LockTimeoutError',
            'LockPermissionError', 'LockROFileError', 'CantCreateLockError']
 
-#: Mapping of supported locks to description
-lock_type = {fcntl.LOCK_SH: 'read', fcntl.LOCK_EX: 'write'}
 
 #: A useful replacement for functions that should return True when not provided
 #: for example.
@@ -96,6 +99,23 @@ class Lock(object):
         self.pid = self.old_pid = None
         self.host = self.old_host = None
 
+        if not spack.config.get('config:locks', True):
+            self.LOCK_EX = None
+            self.LOCK_SH = None
+            self.LOCK_NB = None
+        elif _platform == "win32":
+            self.LOCK_EX = win32con.LOCKFILE_EXCLUSIVE_LOCK
+            self.LOCK_SH = 0
+            self.LOCK_NB = win32con.LOCKFILE_FAIL_IMMEDIATELY
+            self.win_overlapped = pywintypes.OVERLAPPED()
+        else:
+            self.LOCK_EX = fcntl.LOCK_EX
+            self.LOCK_SH = fcntl.LOCK_SH
+            self.LOCK_NB = fcntl.LOCK_NB
+            self.LOCK_UN = fcntl.LOCK_UN
+
+        # Mapping of supported locks to description
+        self.lock_type = {self.LOCK_SH: 'read', self.LOCK_EX: 'write'}
     @staticmethod
     def _poll_interval_generator(_wait_times=None):
         """This implements a backoff scheme for polling a contended resource
@@ -206,9 +226,13 @@ class Lock(object):
 
         try:
             # Try to get the lock (will raise if not available.)
-            fcntl.lockf(self._file, op | fcntl.LOCK_NB,
-                        self._length, self._start, os.SEEK_SET)
-
+            if _platform == "win32":
+                hfile = win32file._get_osfhandle((self._file).fileno())
+                win32file.LockFileEx(hfile, self.LOCK_NB, self._start,
+                                     (self._start + self._length), self.win_overlapped)
+            else:
+                fcntl.lockf(self._file, op | self.LOCK_NB,
+                            self._length, self._start, os.SEEK_SET)
             # help for debugging distributed locking
             if self.debug:
                 # All locks read the owner PID and host
