@@ -358,8 +358,10 @@ class URLFetchStrategy(FetchStrategy):
             _ = urllib2.urlopen(req)
             if sys.version_info[0] > 3:
                 # python 3 : urllib
+                pass
             else:
                 # python 2: urllib + urllib2
+                pass
         else:
             curl_args = save_args + [
                 '-f',  # fail on >400 errors

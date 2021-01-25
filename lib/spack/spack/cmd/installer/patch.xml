@@ -2,6 +2,7 @@
 <CPackWiXPatch>
 	<CPackWiXFragment Id ="#PRODUCTFEATURE">
 			<ComponentGroupRef Id="ProductComponents" />
+			<ComponentRef Id="CleanupApplicationFolder" />
 			<ComponentRef Id="ProgramMenuDir"/>
 	</CPackWiXFragment>
 </CPackWiXPatch>
