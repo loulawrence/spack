@@ -12,11 +12,11 @@ import os
 import re
 import shutil
 import stat
-import sys
+from sys import platform as _platform
 import tempfile
 from contextlib import contextmanager
 
-if sys.platform != 'win32':
+if _platform != 'win32':
     import grp
     import pwd
 

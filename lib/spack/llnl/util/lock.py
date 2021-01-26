@@ -164,9 +164,9 @@ class Lock(object):
         successfully acquired, the total wait time and the number of attempts
         is returned.
         """
-        assert op in lock_type
+        assert op in self.lock_type
 
-        self._log_acquiring('{0} LOCK'.format(lock_type[op].upper()))
+        self._log_acquiring('{0} LOCK'.format(self.lock_type[op].upper()))
         timeout = timeout or self.default_timeout
 
         # Create file and parent directories if they don't exist.
@@ -177,7 +177,7 @@ class Lock(object):
             os_mode, fd_mode = (os.O_RDWR | os.O_CREAT), 'r+'
             if os.path.exists(self.path):
                 if not os.access(self.path, os.W_OK):
-                    if op == fcntl.LOCK_SH:
+                    if op == self.LOCK_SH:
                         # can still lock read-only files if we open 'r'
                         os_mode, fd_mode = os.O_RDONLY, 'r'
                     else:
@@ -189,13 +189,13 @@ class Lock(object):
             fd = os.open(self.path, os_mode)
             self._file = os.fdopen(fd, fd_mode)
 
-        elif op == fcntl.LOCK_EX and self._file.mode == 'r':
+        elif op == self.LOCK_EX and self._file.mode == 'r':
             # Attempt to upgrade to write lock w/a read-only file.
             # If the file were writable, we'd have opened it 'r+'
             raise LockROFileError(self.path)
 
         self._log_debug("{0} locking [{1}:{2}]: timeout {3} sec"
-                        .format(lock_type[op], self._start, self._length,
+                        .format(self.lock_type[op], self._start, self._length,
                                 timeout))
 
         poll_intervals = iter(Lock._poll_interval_generator())
@@ -216,13 +216,13 @@ class Lock(object):
             return total_wait_time, num_attempts
 
         raise LockTimeoutError("Timed out waiting for a {0} lock."
-                               .format(lock_type[op]))
+                               .format(self.lock_type[op]))
 
     def _poll_lock(self, op):
         """Attempt to acquire the lock in a non-blocking manner. Return whether
         the locking attempt succeeds
         """
-        assert op in lock_type
+        assert op in self.lock_type
 
         try:
             # Try to get the lock (will raise if not available.)
@@ -238,11 +238,11 @@ class Lock(object):
                 # All locks read the owner PID and host
                 self._read_log_debug_data()
                 self._log_debug('{0} locked {1} [{2}:{3}] (owner={4})'
-                                .format(lock_type[op], self.path,
+                                .format(self.lock_type[op], self.path,
                                         self._start, self._length, self.pid))
 
                 # Exclusive locks write their PID/host
-                if op == fcntl.LOCK_EX:
+                if op == self.LOCK_EX:
                     self._write_log_debug_data()
 
             return True
@@ -304,8 +304,14 @@ class Lock(object):
         be masquerading as write locks, but this removes either.
 
         """
-        fcntl.lockf(self._file, fcntl.LOCK_UN,
-                    self._length, self._start, os.SEEK_SET)
+        if _platform == "win32":
+            hfile = win32file._get_osfhandle((self._file).fileno())
+            win32file.UnlockFileEx(hfile, self._start,
+                                   (self._start + self._length),
+                                   self.win_overlapped)
+        else:
+            fcntl.lockf(self._file, self.LOCK_UN,
+                        self._length, self._start, os.SEEK_SET)
         self._file.close()
         self._file = None
         self._reads = 0
@@ -326,7 +332,7 @@ class Lock(object):
 
         if self._reads == 0 and self._writes == 0:
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_SH, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_SH, timeout=timeout)
             self._reads += 1
             # Log if acquired, which includes counts when verbose
             self._log_acquired('READ LOCK', wait_time, nattempts)
@@ -351,7 +357,7 @@ class Lock(object):
 
         if self._writes == 0:
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_EX, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_EX, timeout=timeout)
             self._writes += 1
             # Log if acquired, which includes counts when verbose
             self._log_acquired('WRITE LOCK', wait_time, nattempts)
@@ -395,7 +401,7 @@ class Lock(object):
         if self._writes == 1 and self._reads == 0:
             self._log_downgrading()
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_SH, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_SH, timeout=timeout)
             self._reads = 1
             self._writes = 0
             self._log_downgraded(wait_time, nattempts)
@@ -414,7 +420,7 @@ class Lock(object):
         if self._reads == 1 and self._writes == 0:
             self._log_upgrading()
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_EX, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_EX, timeout=timeout)
             self._reads = 0
             self._writes = 1
             self._log_upgraded(wait_time, nattempts)

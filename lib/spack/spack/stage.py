@@ -14,6 +14,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import ctypes
 from six import string_types
 from six import iteritems
 from typing import Dict  # novm
@@ -49,9 +50,10 @@ def _create_stage_root(path):
     assert path.startswith(os.path.sep) and len(path.strip()) > 1
 
     err_msg = 'Cannot create stage root {0}: Access to {1} is denied'
-
-    user_uid = os.getuid()
-
+    try:
+        user_uid = os.getuid() == 0
+    except AttributeError:
+        user_uid = ctypes.windll.shell32.IsUserAnAdmin() != 0
     # Obtain lists of ancestor and descendant paths of the $user node, if any.
     group_paths, user_node, user_paths = partition_path(path,
                                                         getpass.getuser())

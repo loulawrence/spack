@@ -8,7 +8,8 @@ import os
 import re
 import shutil
 import sys
-import tty
+if sys.platform != 'win32':
+    import tty
 
 import llnl.util.filesystem as fs
 

@@ -5,11 +5,13 @@
 
 from spack import *
 
+import sys
 from sys import stdout
 import glob
-from os import O_NONBLOCK, rename
+from os import rename
 from os.path import basename
-from fcntl import fcntl, F_GETFL, F_SETFL
+if sys.platform != 'win32':
+    from fcntl import fcntl, F_GETFL, F_SETFL
 from subprocess import Popen, PIPE
 import time
 from llnl.util import tty
@@ -27,8 +29,9 @@ def setNonBlocking(fd):
     """
     Set the given file descriptor to non-blocking
     """
-    flags = fcntl(fd, F_GETFL) | O_NONBLOCK
-    fcntl(fd, F_SETFL, flags)
+    if sys.platform != 'win32':
+        flags = fcntl(fd, F_GETFL) | os.O_NONBLOCK
+        fcntl(fd, F_SETFL, flags)
 
 
 def collect_platform_options(stdoutpipe):
