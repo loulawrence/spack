@@ -38,9 +38,4 @@ lib/spack/spack/test/.cache
 # VSCode files
 .vscode
 .devcontainer
-.vs
 
-# CMake
-CMakeFiles
-CMakeCache.txt
-.cmake
