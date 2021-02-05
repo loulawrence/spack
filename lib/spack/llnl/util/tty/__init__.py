@@ -5,6 +5,7 @@
 
 from __future__ import unicode_literals
 
+
 import os
 import struct
 import sys
@@ -14,9 +15,12 @@ import six
 from datetime import datetime
 from six import StringIO
 from six.moves import input
-if sys.platform != 'win32':
+from sys import platform as _platform
+
+if _platform != "win32":
     import fcntl
     import termios
+
 from llnl.util.tty.color import cprint, cwrite, cescape, clen
 
 # Globals
@@ -334,24 +338,23 @@ def hline(label=None, **kwargs):
 
 def terminal_size():
     """Gets the dimensions of the console: (rows, cols)."""
-    if sys.platform != 'win32':
-        def ioctl_gwinsz(fd):
-            try:
-                rc = struct.unpack('hh', fcntl.ioctl(
-                    fd, termios.TIOCGWINSZ, '1234'))
-            except BaseException:
-                return
-            return rc
-        rc = ioctl_gwinsz(0) or ioctl_gwinsz(1) or ioctl_gwinsz(2)
-        if not rc:
-            try:
-                fd = os.open(os.ctermid(), os.O_RDONLY)
-                rc = ioctl_gwinsz(fd)
-                os.close(fd)
-            except BaseException:
-                pass
-        if not rc:
-            rc = (os.environ.get('LINES', 25), os.environ.get('COLUMNS', 80))
+    def ioctl_gwinsz(fd):
+        try:
+            rc = struct.unpack('hh', fcntl.ioctl(
+                fd, termios.TIOCGWINSZ, '1234'))
+        except BaseException:
+            return
+        return rc
+    rc = ioctl_gwinsz(0) or ioctl_gwinsz(1) or ioctl_gwinsz(2)
+    if not rc:
+        try:
+            fd = os.open(os.ctermid(), os.O_RDONLY)
+            rc = ioctl_gwinsz(fd)
+            os.close(fd)
+        except BaseException:
+            pass
+    if not rc:
+        rc = (os.environ.get('LINES', 25), os.environ.get('COLUMNS', 80))
 
         return int(rc[0]), int(rc[1])
     else:

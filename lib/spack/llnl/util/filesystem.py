@@ -6,19 +6,22 @@ import collections
 import errno
 import hashlib
 import glob
+
+from sys import platform as _platform
+if _platform != "win32":
+    import grp
+    import pwd
+
+
 import itertools
 import numbers
 import os
 import re
 import shutil
 import stat
-from sys import platform as _platform
+import sys
 import tempfile
 from contextlib import contextmanager
-
-if _platform != 'win32':
-    import grp
-    import pwd
 
 import six
 from llnl.util import tty
@@ -293,6 +296,7 @@ def group_ids(uid=None):
     if _platform == 'win32':
         tty.warn("Function is not supported on Windows")
         return []
+
     if uid is None:
         uid = os.getuid()
     user = pwd.getpwuid(uid).pw_name
@@ -303,7 +307,7 @@ def chgrp(path, group):
     """Implement the bash chgrp function on a single path"""
     if _platform == 'win32':
         tty.warn("Function is not supported on Windows")
-        return []
+        return
 
     if isinstance(group, six.string_types):
         gid = grp.getgrnam(group).gr_gid
