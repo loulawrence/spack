@@ -79,9 +79,23 @@ def test_urlfetchstrategy_bad_url(tmpdir, use_curl):
                 fetcher.fetch()
 
 
+def test_curlfetchstrategy_options(tmpdir, mock_archive):
+    testpath = str(tmpdir)
+    with spack.config.override('config:use_curl', True):
+        fetcher = fs.CurlFetchStrategy(url=mock_archive.url,
+                                       fetch_options={'cookie':'True',
+                                                      'timeout':10})
+        assert fetcher is not None
+
+        with Stage(fetcher, path=testpath) as stage:
+            assert stage is not None
+            assert fetcher.archive_file is None
+            fetcher.fetch()
+
+
 @pytest.mark.parametrize('use_curl', [True, False])
-def test_urlfetch_errors(tmpdir, mock_archive, use_curl):
-    """Ensure fetch with bad URL fails as expected."""
+def test_archive_file_errors(tmpdir, mock_archive, use_curl):
+    """Ensure FetchStrategy commands may only be used as intended"""
     testpath = str(tmpdir)
     with spack.config.override('config:use_curl', use_curl):
         if use_curl:
@@ -93,7 +107,15 @@ def test_urlfetch_errors(tmpdir, mock_archive, use_curl):
             with Stage(fetcher, path=testpath) as stage:
                 assert stage is not None
                 assert fetcher.archive_file is None
+                with pytest.raises(fs.NoArchiveFileError):
+                    fetcher.archive(testpath)
+                with pytest.raises(fs.NoArchiveFileError):
+                    fetcher.expand()
+                with pytest.raises(fs.NoArchiveFileError):
+                    fetcher.reset()
                 stage.fetch()
+                with pytest.raises(fs.NoDigestError):
+                    fetcher.check()
                 assert fetcher.archive_file is not None
                 fetcher._fetch_from_url('file:///does-not-exist')
 
