@@ -79,6 +79,25 @@ def test_urlfetchstrategy_bad_url(tmpdir, use_curl):
                 fetcher.fetch()
 
 
+@pytest.mark.parametrize('use_curl', [True, False])
+def test_urlfetch_errors(tmpdir, mock_archive, use_curl):
+    """Ensure fetch with bad URL fails as expected."""
+    testpath = str(tmpdir)
+    with spack.config.override('config:use_curl', use_curl):
+        if use_curl:
+            fetcher = fs.CurlFetchStrategy(url=mock_archive.url)
+        else:
+            fetcher = fs.URLFetchStrategy(url=mock_archive.url)
+        assert fetcher is not None
+        with pytest.raises(fs.FailedDownloadError):
+            with Stage(fetcher, path=testpath) as stage:
+                assert stage is not None
+                assert fetcher.archive_file is None
+                stage.fetch()
+                assert fetcher.archive_file is not None
+                fetcher._fetch_from_url('file:///does-not-exist')
+
+
 @pytest.mark.parametrize('secure', [True, False])
 @pytest.mark.parametrize('use_curl', [True, False])
 @pytest.mark.parametrize('mock_archive',

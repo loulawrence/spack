@@ -338,13 +338,13 @@ class URLFetchStrategy(FetchStrategy):
         try:
             url, headers, response = web_util.read_from_url(url)
         except web_util.SpackWebError as e:
-            msg = 'urllib failed to fetch with error {0}'.format(e)
-            raise FailedDownloadError(url, msg)
             # clean up archive on failure.
             if self.archive_file:
                 os.remove(self.archive_file)
             if partial_file and os.path.exists(partial_file):
                 os.remove(partial_file)
+            msg = 'urllib failed to fetch with error {0}'.format(e)
+            raise FailedDownloadError(url, msg)
         _data = response.read()
         open(partial_file, 'wb').write(_data)
         headers = _data.decode('utf-8', 'ignore')
