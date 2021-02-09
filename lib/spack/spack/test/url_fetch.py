@@ -79,12 +79,12 @@ def test_urlfetchstrategy_bad_url(tmpdir, use_curl):
                 fetcher.fetch()
 
 
-def test_curlfetchstrategy_options(tmpdir, mock_archive):
+def test_fetch_options(tmpdir, mock_archive):
     testpath = str(tmpdir)
     with spack.config.override('config:use_curl', True):
         fetcher = fs.CurlFetchStrategy(url=mock_archive.url,
-                                       fetch_options={'cookie':'True',
-                                                      'timeout':10})
+                                       fetch_options={'cookie': 'True',
+                                                      'timeout': 10})
         assert fetcher is not None
 
         with Stage(fetcher, path=testpath) as stage:

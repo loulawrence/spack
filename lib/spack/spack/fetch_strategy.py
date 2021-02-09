@@ -289,7 +289,6 @@ class URLFetchStrategy(FetchStrategy):
         if self.archive_file:
             tty.debug('Already downloaded {0}'.format(self.archive_file))
             return
-
         url = None
         errors = []
         for url in self.candidate_urls:
@@ -301,7 +300,7 @@ class URLFetchStrategy(FetchStrategy):
                 if save_file:
                     os.rename(partial_file, save_file)
                 break
-            except FetchError as e:
+            except FailedDownloadError as e:
                 errors.append(str(e))
 
         for msg in errors:
@@ -327,12 +326,6 @@ class URLFetchStrategy(FetchStrategy):
             save_file = self.stage.save_filename
             partial_file = self.stage.save_filename + '.part'
         tty.msg('Fetching {0}'.format(url))
-
-        connect_timeout = spack.config.get('config:connect_timeout', 10)
-
-        timeout = self.extra_options.get('timeout')
-        if timeout:
-            connect_timeout = max(connect_timeout, int(timeout))
 
         # Run urllib but grab the mime type from the http headers
         try:
