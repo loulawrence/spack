@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
 
 import os
+import sys
 import collections
 import getpass
 import tempfile
@@ -701,26 +702,26 @@ def test_bad_config_section(mock_low_high_config):
     with pytest.raises(spack.config.ConfigSectionError):
         spack.config.get('foobar')
 
+if sys.platform != 'win32':
+    @pytest.mark.skipif(os.getuid() == 0, reason='user is root')
+    def test_bad_command_line_scopes(tmpdir, mock_low_high_config):
+        cfg = spack.config.Configuration()
 
-@pytest.mark.skipif(os.getuid() == 0, reason='user is root')
-def test_bad_command_line_scopes(tmpdir, mock_low_high_config):
-    cfg = spack.config.Configuration()
+        with tmpdir.as_cwd():
+            with pytest.raises(spack.config.ConfigError):
+                spack.config._add_command_line_scopes(cfg, ['bad_path'])
 
-    with tmpdir.as_cwd():
-        with pytest.raises(spack.config.ConfigError):
-            spack.config._add_command_line_scopes(cfg, ['bad_path'])
+            touch('unreadable_file')
+            with pytest.raises(spack.config.ConfigError):
+                spack.config._add_command_line_scopes(cfg, ['unreadable_file'])
 
-        touch('unreadable_file')
-        with pytest.raises(spack.config.ConfigError):
-            spack.config._add_command_line_scopes(cfg, ['unreadable_file'])
-
-        mkdirp('unreadable_dir')
-        with pytest.raises(spack.config.ConfigError):
-            try:
-                os.chmod('unreadable_dir', 0)
-                spack.config._add_command_line_scopes(cfg, ['unreadable_dir'])
-            finally:
-                os.chmod('unreadable_dir', 0o700)  # so tmpdir can be removed
+            mkdirp('unreadable_dir')
+            with pytest.raises(spack.config.ConfigError):
+                try:
+                    os.chmod('unreadable_dir', 0)
+                    spack.config._add_command_line_scopes(cfg, ['unreadable_dir'])
+                finally:
+                    os.chmod('unreadable_dir', 0o700)  # so tmpdir can be removed
 
 
 def test_add_command_line_scopes(tmpdir, mutable_config):

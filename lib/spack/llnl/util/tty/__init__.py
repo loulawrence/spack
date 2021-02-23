@@ -5,17 +5,21 @@
 
 from __future__ import unicode_literals
 
-import fcntl
+
 import os
 import struct
 import sys
-import termios
 import textwrap
 import traceback
 import six
 from datetime import datetime
 from six import StringIO
 from six.moves import input
+from sys import platform as _platform
+
+if _platform != "win32":
+    import fcntl
+    import termios
 
 from llnl.util.tty.color import cprint, cwrite, cescape, clen
 
@@ -352,4 +356,9 @@ def terminal_size():
     if not rc:
         rc = (os.environ.get('LINES', 25), os.environ.get('COLUMNS', 80))
 
-    return int(rc[0]), int(rc[1])
+        return int(rc[0]), int(rc[1])
+    else:
+        # return shutil.get_terminal_size()
+        # TODO: find python 2 compatible module to get terminal size
+        rc = (os.environ.get('LINES', 25), os.environ.get('COLUMNS', 80))
+        return int(rc[0]), int(rc[1])

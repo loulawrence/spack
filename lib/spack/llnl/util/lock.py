@@ -4,22 +4,26 @@
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
 
 import os
-import fcntl
 import errno
 import time
 import socket
 from datetime import datetime
-
+from sys import platform as _platform
 import llnl.util.tty as tty
 import spack.util.string
 
+if _platform != "win32":
+    import fcntl
+else:
+    import win32con
+    import win32file
+    import win32security
+    import pywintypes
 
 __all__ = ['Lock', 'LockTransaction', 'WriteTransaction', 'ReadTransaction',
            'LockError', 'LockTimeoutError',
            'LockPermissionError', 'LockROFileError', 'CantCreateLockError']
 
-#: Mapping of supported locks to description
-lock_type = {fcntl.LOCK_SH: 'read', fcntl.LOCK_EX: 'write'}
 
 #: A useful replacement for functions that should return True when not provided
 #: for example.
@@ -74,6 +78,7 @@ class Lock(object):
         """
         self.path = path
         self._file = None
+        self._file_mode = ""
         self._reads = 0
         self._writes = 0
 
@@ -95,6 +100,20 @@ class Lock(object):
         # PID and host of lock holder (only used in debug mode)
         self.pid = self.old_pid = None
         self.host = self.old_host = None
+
+        if _platform == "win32":
+            self.LOCK_EX = win32con.LOCKFILE_EXCLUSIVE_LOCK  # exclusive lock
+            self.LOCK_SH = 0  # shared lock, default
+            self.LOCK_NB = win32con.LOCKFILE_FAIL_IMMEDIATELY  # non-blocking
+            self.win_overlapped = pywintypes.OVERLAPPED()
+        else:
+            self.LOCK_EX = fcntl.LOCK_EX
+            self.LOCK_SH = fcntl.LOCK_SH
+            self.LOCK_NB = fcntl.LOCK_NB
+            self.LOCK_UN = fcntl.LOCK_UN
+
+        # Mapping of supported locks to description
+        self.lock_type = {self.LOCK_SH: 'read', self.LOCK_EX: 'write'}
 
     @staticmethod
     def _poll_interval_generator(_wait_times=None):
@@ -144,38 +163,45 @@ class Lock(object):
         successfully acquired, the total wait time and the number of attempts
         is returned.
         """
-        assert op in lock_type
+        assert op in self.lock_type
 
-        self._log_acquiring('{0} LOCK'.format(lock_type[op].upper()))
+        if _platform == "win32":
+            if self._start != 0 or self._length != 0:
+                raise LockError("Locking ranges not supported on Windows")
+        self._log_acquiring('{0} LOCK'.format(self.lock_type[op].upper()))
         timeout = timeout or self.default_timeout
 
         # Create file and parent directories if they don't exist.
         if self._file is None:
-            parent = self._ensure_parent_directory()
+            if _platform != "win32":
+                parent = self._ensure_parent_directory()
+                # Open writable files as 'r+' so we can upgrade to write later
+                os_mode, fd_mode = (os.O_RDWR | os.O_CREAT), 'r+'
+                if os.path.exists(self.path):
+                    if not os.access(self.path, os.W_OK):
+                        if op == self.LOCK_SH:
+                            # can still lock read-only files if we open 'r'
+                            os_mode, fd_mode = os.O_RDONLY, 'r'
+                        else:
+                            raise LockROFileError(self.path)
 
-            # Open writable files as 'r+' so we can upgrade to write later
-            os_mode, fd_mode = (os.O_RDWR | os.O_CREAT), 'r+'
-            if os.path.exists(self.path):
-                if not os.access(self.path, os.W_OK):
-                    if op == fcntl.LOCK_SH:
-                        # can still lock read-only files if we open 'r'
-                        os_mode, fd_mode = os.O_RDONLY, 'r'
-                    else:
-                        raise LockROFileError(self.path)
+                elif not os.access(parent, os.W_OK):
+                    raise CantCreateLockError(self.path)
 
-            elif not os.access(parent, os.W_OK):
-                raise CantCreateLockError(self.path)
+                fd = os.open(self.path, os_mode)
+                self._file = os.fdopen(fd, fd_mode)
+                self._file_mode = fd_mode
+            else:
+                # TODO: Need to check for read only files on Windows
+                pass
 
-            fd = os.open(self.path, os_mode)
-            self._file = os.fdopen(fd, fd_mode)
-
-        elif op == fcntl.LOCK_EX and self._file.mode == 'r':
+        elif op == self.LOCK_EX and self._file_mode == 'r':
             # Attempt to upgrade to write lock w/a read-only file.
             # If the file were writable, we'd have opened it 'r+'
             raise LockROFileError(self.path)
 
         self._log_debug("{0} locking [{1}:{2}]: timeout {3} sec"
-                        .format(lock_type[op], self._start, self._length,
+                        .format(self.lock_type[op], self._start, self._length,
                                 timeout))
 
         poll_intervals = iter(Lock._poll_interval_generator())
@@ -196,29 +222,70 @@ class Lock(object):
             return total_wait_time, num_attempts
 
         raise LockTimeoutError("Timed out waiting for a {0} lock."
-                               .format(lock_type[op]))
+                               .format(self.lock_type[op]))
 
     def _poll_lock(self, op):
         """Attempt to acquire the lock in a non-blocking manner. Return whether
         the locking attempt succeeds
         """
-        assert op in lock_type
+        assert op in self.lock_type
 
         try:
             # Try to get the lock (will raise if not available.)
-            fcntl.lockf(self._file, op | fcntl.LOCK_NB,
-                        self._length, self._start, os.SEEK_SET)
+            if _platform == "win32":
+                if self._file is None:
+                    self._ensure_parent_directory()
+
+                    secur_att = win32security.SECURITY_ATTRIBUTES()
+                    secur_att.Initialize()
+
+                    if op == self.LOCK_SH:
+                        share_mode = \
+                            win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE
+                    else:
+                        share_mode = 0
+
+                    self._file_mode = 'r+'
+                    access = win32con.GENERIC_READ | win32con.GENERIC_WRITE
+                    if os.path.exists(self.path):
+                        if not os.access(self.path, os.W_OK):
+                            if op == self.LOCK_SH:
+                                # can still lock read-only files if we open 'r'
+                                self._file_mode = 'r'
+                                access = win32con.GENERIC_READ
+                            else:
+                                raise LockROFileError(self.path)
+                    if os.path.exists(self.path):
+                        creationDisposition = win32con.OPEN_EXISTING
+                    else:
+                        creationDisposition = win32con.OPEN_ALWAYS
+                    self._file = win32file.CreateFile(
+                        self.path,  # filename
+                        access,  # access
+                        share_mode,  # mode
+                        secur_att,  # securityAttributes
+                        creationDisposition,  # creationDisposition
+                        win32con.FILE_ATTRIBUTE_NORMAL,  # flagsAndAttributes
+                        0)  # templateFile
+                win32file.LockFileEx(self._file,
+                                     op | self.LOCK_NB,
+                                     0,
+                                     0,
+                                     self.win_overlapped)
+            else:
+                fcntl.lockf(self._file, op | self.LOCK_NB,
+                            self._length, self._start, os.SEEK_SET)
 
             # help for debugging distributed locking
             if self.debug:
                 # All locks read the owner PID and host
                 self._read_log_debug_data()
                 self._log_debug('{0} locked {1} [{2}:{3}] (owner={4})'
-                                .format(lock_type[op], self.path,
+                                .format(self.lock_type[op], self.path,
                                         self._start, self._length, self.pid))
 
                 # Exclusive locks write their PID/host
-                if op == fcntl.LOCK_EX:
+                if op == self.LOCK_EX:
                     self._write_log_debug_data()
 
             return True
@@ -227,12 +294,18 @@ class Lock(object):
             # EAGAIN and EACCES == locked by another process (so try again)
             if e.errno not in (errno.EAGAIN, errno.EACCES):
                 raise
+        except pywintypes.error as e:
+            if e.args[0] not in (32, 33):
+                # 33 "The process cannot access the file because another
+                #     process has locked a portion of the file."
+                # 32 "The process cannot access the file because it is being
+                #     used by another process"
+                raise
 
         return False
 
     def _ensure_parent_directory(self):
         parent = os.path.dirname(self.path)
-
         # relative paths to lockfiles in the current directory have no parent
         if not parent:
             return '.'
@@ -240,7 +313,7 @@ class Lock(object):
         try:
             os.makedirs(parent)
         except OSError as e:
-            # makedirs can fail when diretory already exists.
+            # makedirs can fail when directory already exists.
             if not (e.errno == errno.EEXIST and os.path.isdir(parent) or
                     e.errno == errno.EISDIR):
                 raise
@@ -248,6 +321,10 @@ class Lock(object):
 
     def _read_log_debug_data(self):
         """Read PID and host data out of the file if it is there."""
+        if _platform == "win32":
+            # Not implemented for windows
+            return
+
         self.old_pid = self.pid
         self.old_host = self.host
 
@@ -260,6 +337,10 @@ class Lock(object):
 
     def _write_log_debug_data(self):
         """Write PID and host data to the file, recording old values."""
+        if _platform == "win32":
+            # Not implemented for windows
+            return
+
         self.old_pid = self.pid
         self.old_host = self.host
 
@@ -280,10 +361,18 @@ class Lock(object):
         be masquerading as write locks, but this removes either.
 
         """
-        fcntl.lockf(self._file, fcntl.LOCK_UN,
-                    self._length, self._start, os.SEEK_SET)
+        if _platform == "win32":
+            win32file.UnlockFileEx(self._file,
+                                   0,
+                                   0,
+                                   self.win_overlapped)
+        else:
+            fcntl.lockf(self._file, self.LOCK_UN,
+                        self._length, self._start, os.SEEK_SET)
+
         self._file.close()
         self._file = None
+        self._file_mode = ""
         self._reads = 0
         self._writes = 0
 
@@ -302,7 +391,7 @@ class Lock(object):
 
         if self._reads == 0 and self._writes == 0:
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_SH, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_SH, timeout=timeout)
             self._reads += 1
             # Log if acquired, which includes counts when verbose
             self._log_acquired('READ LOCK', wait_time, nattempts)
@@ -327,7 +416,7 @@ class Lock(object):
 
         if self._writes == 0:
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_EX, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_EX, timeout=timeout)
             self._writes += 1
             # Log if acquired, which includes counts when verbose
             self._log_acquired('WRITE LOCK', wait_time, nattempts)
@@ -371,7 +460,7 @@ class Lock(object):
         if self._writes == 1 and self._reads == 0:
             self._log_downgrading()
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_SH, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_SH, timeout=timeout)
             self._reads = 1
             self._writes = 0
             self._log_downgraded(wait_time, nattempts)
@@ -390,7 +479,7 @@ class Lock(object):
         if self._reads == 1 and self._writes == 0:
             self._log_upgrading()
             # can raise LockError.
-            wait_time, nattempts = self._lock(fcntl.LOCK_EX, timeout=timeout)
+            wait_time, nattempts = self._lock(self.LOCK_EX, timeout=timeout)
             self._reads = 0
             self._writes = 1
             self._log_upgraded(wait_time, nattempts)

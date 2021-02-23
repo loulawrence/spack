@@ -9,9 +9,10 @@ import os
 import collections
 import shutil
 import stat
+import sys
 import tempfile
 import getpass
-
+import ctypes
 import pytest
 
 from llnl.util.filesystem import mkdirp, partition_path, touch, working_dir
@@ -66,7 +67,11 @@ _include_extra = 3
 #         _extra_fn       test_extra file (contains _extra_contents)
 #     _archive_fn         archive_url = file:///path/to/_archive_fn
 #
-
+def getuid():
+     if sys.platform != 'win32':
+        return os.getuid()
+     else:
+        return ctypes.windll.shell32.IsUserAnAdmin()
 
 @pytest.fixture
 def clear_stage_root(monkeypatch):
@@ -359,7 +364,7 @@ def check_stage_dir_perms(prefix, path):
 
     user = getpass.getuser()
     prefix_status = os.stat(prefix)
-    uid = os.getuid()
+    uid = getuid()
 
     # Obtain lists of ancestor and descendant paths of the $user node, if any.
     #
@@ -659,7 +664,7 @@ class TestStage(object):
         assert source_path.endswith(spack.stage._source_path_subdir)
         assert not os.path.exists(source_path)
 
-    @pytest.mark.skipif(os.getuid() == 0, reason='user is root')
+    @pytest.mark.skipif(getuid() == 0, reason='user is root')
     def test_first_accessible_path(self, tmpdir):
         """Test _first_accessible_path names."""
         spack_dir = tmpdir.join('paths')
@@ -749,13 +754,13 @@ class TestStage(object):
         #  with monkeypatch.context() as m:
         #      m.setattr(os, 'stat', _stat)
         #      spack.stage._create_stage_root(user_path)
-        #      assert os.stat(user_path).st_uid != os.getuid()
+        #      assert os.stat(user_path).st_uid != getuid()
         monkeypatch.setattr(os, 'stat', _stat)
         spack.stage._create_stage_root(user_path)
 
         # The following check depends on the patched os.stat as a poor
         # substitute for confirming the generated warnings.
-        assert os.stat(user_path).st_uid != os.getuid()
+        assert os.stat(user_path).st_uid != getuid()
 
     def test_resolve_paths(self):
         """Test _resolve_paths."""
@@ -790,7 +795,7 @@ class TestStage(object):
 
         assert spack.stage._resolve_paths(paths) == res_paths
 
-    @pytest.mark.skipif(os.getuid() == 0, reason='user is root')
+    @pytest.mark.skipif(getuid() == 0, reason='user is root')
     def test_get_stage_root_bad_path(self, clear_stage_root):
         """Ensure an invalid stage path root raises a StageError."""
         with spack.config.override('config:build_stage', '/no/such/path'):
