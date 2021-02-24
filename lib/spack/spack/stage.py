@@ -357,15 +357,11 @@ class Stage(object):
     def expected_archive_files(self):
         """Possible archive file paths."""
         paths = []
-
         fnames = []
-        expanded = True
-        if isinstance(self.default_fetcher, fs.URLFetchStrategy):
-            expanded = self.default_fetcher.expand_archive
-            fnames.append(os.path.basename(self.default_fetcher.url))
-        elif isinstance(self.default_fetcher, fs.CurlFetchStrategy):
-            expanded = self.default_fetcher.expand_archive
-            fnames.append(os.path.basename(self.default_fetcher.url))
+
+        expanded = self.default_fetcher.expand_archive
+        fnames.append(os.path.basename(self.default_fetcher.url))
+
         if self.mirror_paths:
             fnames.extend(os.path.basename(x) for x in self.mirror_paths)
 
@@ -434,17 +430,9 @@ class Stage(object):
             # If this archive is normally fetched from a tarball URL,
             # then use the same digest.  `spack mirror` ensures that
             # the checksum will be the same.
-            digest = None
-            expand = True
-            extension = None
-            if isinstance(self.default_fetcher, fs.URLFetchStrategy):
-                digest = self.default_fetcher.digest
-                expand = self.default_fetcher.expand_archive
-                extension = self.default_fetcher.extension
-            elif isinstance(self.default_fetcher, fs.CurlFetchStrategy):
-                digest = self.default_fetcher.digest
-                expand = self.default_fetcher.expand_archive
-                extension = self.default_fetcher.extension
+            digest = self.default_fetcher.digest
+            expand = self.default_fetcher.expand_archive
+            extension = self.default_fetcher.extension
 
             # Have to skip the checksum for things archived from
             # repositories.  How can this be made safer?
