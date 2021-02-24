@@ -24,6 +24,7 @@ import spack.util.gpg
 from spack.spec import Spec
 from spack.paths import mock_gpg_keys_path
 from spack.fetch_strategy import URLFetchStrategy, FetchStrategyComposite
+from spack.fetch_strategy import CurlFetchStrategy
 from spack.relocate import needs_binary_relocation, needs_text_relocation
 from spack.relocate import relocate_text, relocate_links
 from spack.relocate import macho_make_paths_relative

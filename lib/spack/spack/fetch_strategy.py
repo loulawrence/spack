@@ -843,6 +843,39 @@ class CacheURLFetchStrategy(URLFetchStrategy):
         tty.msg('Using cached archive: {0}'.format(path))
 
 
+@fetcher
+class CacheCurlFetchStrategy(CurlFetchStrategy):
+    """The resource associated with a cache URL may be out of date."""
+
+    @_needs_stage
+    def fetch(self):
+        path = re.sub('^file://', '', self.url)
+
+        # check whether the cache file exists.
+        if not os.path.isfile(path):
+            raise NoCacheError('No cache of %s' % path)
+
+        # remove old symlink if one is there.
+        filename = self.stage.save_filename
+        if os.path.exists(filename):
+            os.remove(filename)
+
+        # Symlink to local cached archive.
+        os.symlink(path, filename)
+
+        # Remove link if checksum fails, or subsequent fetchers
+        # will assume they don't need to download.
+        if self.digest:
+            try:
+                self.check()
+            except ChecksumError:
+                os.remove(self.archive_file)
+                raise
+
+        # Notify the user how we fetched.
+        tty.msg('Using cached archive: {0}'.format(path))
+
+
 class VCSFetchStrategy(FetchStrategy):
     """Superclass for version control system fetch strategies.
 
@@ -1439,6 +1472,53 @@ class S3FetchStrategy(URLFetchStrategy):
         if not self.archive_file:
             raise FailedDownloadError(self.url)
 
+@fetcher
+class S3CurlFetchStrategy(CurlFetchStrategy):
+    """FetchStrategy that pulls from an S3 bucket."""
+    url_attr = 's3'
+
+    def __init__(self, *args, **kwargs):
+        try:
+            super(S3CurlFetchStrategy, self).__init__(*args, **kwargs)
+        except ValueError:
+            if not kwargs.get('url'):
+                raise ValueError(
+                    "S3CurlFetchStrategy requires a url for fetching.")
+
+    @_needs_stage
+    def fetch(self):
+        if self.archive_file:
+            tty.debug('Already downloaded {0}'.format(self.archive_file))
+            return
+
+        parsed_url = url_util.parse(self.url)
+        if parsed_url.scheme != 's3':
+            raise FetchError(
+                'S3FetchStrategy can only fetch from s3:// urls.')
+
+        tty.debug('Fetching {0}'.format(self.url))
+
+        basename = os.path.basename(parsed_url.path)
+
+        with working_dir(self.stage.path):
+            _, headers, stream = web_util.read_from_url(self.url)
+
+            with open(basename, 'wb') as f:
+                shutil.copyfileobj(stream, f)
+
+            content_type = web_util.get_header(headers, 'Content-type')
+
+        if content_type == 'text/html':
+            warn_content_type_mismatch(self.archive_file or "the archive")
+
+        if self.stage.save_filename:
+            os.rename(
+                os.path.join(self.stage.path, basename),
+                self.stage.save_filename)
+
+        if not self.archive_file:
+            raise FailedDownloadError(self.url)
+
 
 def stable_target(fetcher):
     """Returns whether the fetcher target is expected to have a stable
@@ -1692,6 +1772,8 @@ class FsCache(object):
         # Don't store things that are already cached.
         if isinstance(fetcher, CacheURLFetchStrategy):
             return
+        if isinstance(fetcher, CacheCurlFetchStrategy):
+            return
 
         dst = os.path.join(self.root, relative_dest)
         mkdirp(os.path.dirname(dst))
@@ -1699,7 +1781,10 @@ class FsCache(object):
 
     def fetcher(self, target_path, digest, **kwargs):
         path = os.path.join(self.root, target_path)
-        return CacheURLFetchStrategy(path, digest, **kwargs)
+        if spack.config.get('config:use_curl'):
+            return CacheCurlFetchStrategy(path, digest, **kwargs)
+        else:
+            return CacheURLFetchStrategy(path, digest, **kwargs)
 
     def destroy(self):
         shutil.rmtree(self.root, ignore_errors=True)
