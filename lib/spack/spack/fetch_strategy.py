@@ -241,6 +241,7 @@ class URLFetchStrategy(FetchStrategy):
     The destination for the resulting file(s) is the standard stage path.
     """
     url_attr = 'url'
+    is_curl = False
 
     # these are checksum types. The generic 'checksum' is deprecated for
     # specific hash names, but we need it for backward compatibility
