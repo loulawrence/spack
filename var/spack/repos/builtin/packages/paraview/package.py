@@ -20,8 +20,8 @@ class Paraview(CMakePackage, CudaPackage):
     maintainers = ['chuckatkins', 'danlipsa', 'vicentebolea']
 
     version('master', branch='master', submodules=True)
-    version('5.9.0-RC4', sha256='9539b57bc8255dd40bc1db2c48a6e8cd8b3474302f4e36cd3173cd88bb0e54f4')
-    version('5.8.1', sha256='7653950392a0d7c0287c26f1d3a25cdbaa11baa7524b0af0e6a1a0d7d487d034', preferred=True)
+    version('5.9.0', sha256='b03258b7cddb77f0ee142e3e77b377e5b1f503bcabc02bfa578298c99a06980d')
+    version('5.8.1', sha256='7653950392a0d7c0287c26f1d3a25cdbaa11baa7524b0af0e6a1a0d7d487d034')
     version('5.8.0', sha256='219e4107abf40317ce054408e9c3b22fb935d464238c1c00c0161f1c8697a3f9')
     version('5.7.0', sha256='e41e597e1be462974a03031380d9e5ba9a7efcdb22e4ca2f3fec50361f310874')
     version('5.6.2', sha256='1f3710b77c58a46891808dbe23dc59a1259d9c6b7bb123aaaeaa6ddf2be882ea')
@@ -181,6 +181,12 @@ class Paraview(CMakePackage, CudaPackage):
             env.set('PARAVIEW_VTK_DIR',
                     join_path(lib_dir, 'cmake', self.paraview_subdir, 'vtk'))
 
+    def flag_handler(self, name, flags):
+        if name == 'ldflags' and self.spec.satisfies('%intel'):
+            flags.append('-shared-intel')
+            return(None, flags, None)
+        return(flags, None, None)
+
     def setup_run_environment(self, env):
         # paraview 5.5 and later
         # - cmake under lib/cmake/paraview-5.5
@@ -261,6 +267,8 @@ class Paraview(CMakePackage, CudaPackage):
                 cmake_args.extend([
                     '-DPARAVIEW_USE_QT:BOOL=%s' % variant_bool('+qt'),
                     '-DPARAVIEW_BUILD_WITH_EXTERNAL=ON'])
+                if spec.satisfies('%cce'):
+                    cmake_args.append('-DVTK_PYTHON_OPTIONAL_LINK:BOOL=OFF')
             else:  # @5.7:
                 cmake_args.extend([
                     '-DPARAVIEW_BUILD_QT_GUI:BOOL=%s' % variant_bool('+qt'),
