@@ -232,12 +232,9 @@ class UrlPatch(Patch):
         fetch_digest = self.sha256
         if self.archive_sha256:
             fetch_digest = self.archive_sha256
-        if spack.config.get('config:use_curl'):
-            fetcher = fs.CurlFetchStrategy(self.url, fetch_digest,
-                                           expand=bool(self.archive_sha256))
-        else:
-            fetcher = fs.URLFetchStrategy(self.url, fetch_digest,
-                                          expand=bool(self.archive_sha256))
+
+        fetcher = fs.URLFetchStrategy(self.url, fetch_digest,
+                                      expand=bool(self.archive_sha256))
 
         # The same package can have multiple patches with the same name but
         # with different contents, therefore apply a subset of the hash.

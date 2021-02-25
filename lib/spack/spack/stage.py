@@ -860,11 +860,7 @@ def get_checksums_for_versions(
     for url, version in zip(urls, versions):
         try:
             if fetch_options:
-                if spack.config.get('config:use_curl'):
-                    url_or_fs = fs.CurlFetchStrategy(
-                        url, fetch_options=fetch_options)
-                else:
-                    url_or_fs = fs.URLFetchStrategy(
+                url_or_fs = fs.URLFetchStrategy(
                         url, fetch_options=fetch_options)
             else:
                 url_or_fs = url

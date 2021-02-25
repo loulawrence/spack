@@ -262,6 +262,7 @@ class URLFetchStrategy(FetchStrategy):
 
         self.expand_archive = kwargs.get('expand', True)
         self.extra_options = kwargs.get('fetch_options', {})
+        self._curl = None
 
         self.extension = kwargs.get('extension', None)
 
@@ -279,6 +280,16 @@ class URLFetchStrategy(FetchStrategy):
         # entries
         return os.path.sep.join(
             ['archive', self.digest[:2], self.digest])
+
+    @property
+    def curl(self):
+        if not self._curl:
+            try:
+                self._curl = which('curl', required=True)
+            except CommandNotFoundError as exc:
+                tty.error(str(exc)+"\n==> Spack will use urllib to fetch")
+                self._curl = None
+        return self._curl
 
     @property
     def candidate_urls(self):
@@ -312,14 +323,29 @@ class URLFetchStrategy(FetchStrategy):
     def _existing_url(self, url):
         tty.debug('Checking existence of {0}'.format(url))
         # Telling urllib to check if url is accessible
-        try:
-            url, headers, response = web_util.read_from_url(url)
-        except web_util.SpackWebError:
-            msg = "Urllib fetch failed to verify url {0}".format(url)
-            raise FailedDownloadError(url, msg)
-        return (response.getcode() is None or response.getcode() == 200)
+        curl = self.curl
+        if spack.config.get('config:use_curl') and curl is not None:
+            # Telling curl to fetch the first byte (-r 0-0) is supposed to be
+            # portable.
+            curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
+            _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
+            return curl.returncode == 0
+        else:
+            try:
+                url, headers, response = web_util.read_from_url(url)
+            except web_util.SpackWebError:
+                msg = "Urllib fetch failed to verify url {0}".format(url)
+                raise FailedDownloadError(url, msg)
+            return (response.getcode() is None or response.getcode() == 200)
 
     def _fetch_from_url(self, url):
+        if spack.config.get('config:use_curl'):
+            return self._fetch_curl(url)
+        else:
+            return self._fetch_urllib(url)
+
+    @_needs_stage
+    def _fetch_urllib(self, url):
         save_file = None
         partial_file = None
         if self.stage.save_filename:
@@ -341,6 +367,102 @@ class URLFetchStrategy(FetchStrategy):
         _data = response.read()
         open(partial_file, 'wb').write(_data)
         headers = _data.decode('utf-8', 'ignore')
+
+        # Check if we somehow got an HTML file rather than the archive we
+        # asked for.  We only look at the last content type, to handle
+        # redirects properly.
+        content_types = re.findall(r'Content-Type:[^\r\n]+', headers,
+                                   flags=re.IGNORECASE)
+        if content_types and 'text/html' in content_types[-1]:
+            warn_content_type_mismatch(self.archive_file or "the archive")
+        return partial_file, save_file
+
+    @_needs_stage
+    def _fetch_curl(self, url):
+        save_file = None
+        partial_file = None
+        if self.stage.save_filename:
+            save_file = self.stage.save_filename
+            partial_file = self.stage.save_filename + '.part'
+        tty.msg('Fetching {0}'.format(url))
+        if partial_file:
+            save_args = ['-C',
+                         '-',  # continue partial downloads
+                         '-o',
+                         partial_file]  # use a .part file
+        else:
+            save_args = ['-O']
+
+        curl_args = save_args + [
+            '-f',  # fail on >400 errors
+            '-D',
+            '-',  # print out HTML headers
+            '-L',  # resolve 3xx redirects
+            url,
+        ]
+
+        if not spack.config.get('config:verify_ssl'):
+            curl_args.append('-k')
+
+        if sys.stdout.isatty() and tty.msg_enabled():
+            curl_args.append('-#')  # status bar when using a tty
+        else:
+            curl_args.append('-sS')  # show errors if fail
+
+        connect_timeout = spack.config.get('config:connect_timeout', 10)
+
+        if self.extra_options:
+            cookie = self.extra_options.get('cookie')
+            if cookie:
+                curl_args.append('-j')  # junk cookies
+                curl_args.append('-b')  # specify cookie
+                curl_args.append(cookie)
+
+            timeout = self.extra_options.get('timeout')
+            if timeout:
+                connect_timeout = max(connect_timeout, int(timeout))
+
+        if connect_timeout > 0:
+            # Timeout if can't establish a connection after n sec.
+            curl_args.extend(['--connect-timeout', str(connect_timeout)])
+
+        curl = self.curl
+        if curl is None:
+            return self._fetch_urllib(url)
+        # Run curl but grab the mime type from the http headers
+        with working_dir(self.stage.path):
+            headers = curl(*curl_args, output=str, fail_on_error=False)
+
+        if curl.returncode != 0:
+            # clean up archive on failure.
+            if self.archive_file:
+                os.remove(self.archive_file)
+
+            if partial_file and os.path.exists(partial_file):
+                os.remove(partial_file)
+
+            if curl.returncode == 22:
+                # This is a 404.  Curl will print the error.
+                raise FailedDownloadError(
+                    url, "URL %s was not found!" % url)
+
+            elif curl.returncode == 60:
+                # This is a certificate error.  Suggest spack -k
+                raise FailedDownloadError(
+                    url,
+                    "Curl was unable to fetch due to invalid certificate. "
+                    "This is either an attack, or your cluster's SSL "
+                    "configuration is bad.  If you believe your SSL "
+                    "configuration is bad, you can try running spack -k, "
+                    "which will not check SSL certificates."
+                    "Use this at your own risk.")
+
+            else:
+                # This is some other curl error.  Curl will print the
+                # error, but print a spack message too
+                raise FailedDownloadError(
+                    url,
+                    "Curl failed with error %d" % curl.returncode)
 
         # Check if we somehow got an HTML file rather than the archive we
         # asked for.  We only look at the last content type, to handle
@@ -487,364 +609,7 @@ class URLFetchStrategy(FetchStrategy):
 
 
 @fetcher
-class CurlFetchStrategy(FetchStrategy):
-    """CurlFetchStrategy pulls source code from a URL for an archive, check the
-    archive against a checksum, and decompresses the archive.
-
-    The destination for the resulting file(s) is the standard stage path.
-    """
-    url_attr = 'url'
-
-    # these are checksum types. The generic 'checksum' is deprecated for
-    # specific hash names, but we need it for backward compatibility
-    optional_attrs = list(crypto.hashes.keys()) + ['checksum']
-
-    def __init__(self, url=None, checksum=None, **kwargs):
-        super(CurlFetchStrategy, self).__init__(**kwargs)
-
-        # Prefer values in kwargs to the positionals.
-        self.url = kwargs.get('url', url)
-        self.mirrors = kwargs.get('mirrors', [])
-
-        # digest can be set as the first argument, or from an explicit
-        # kwarg by the hash name.
-        self.digest = kwargs.get('checksum', checksum)
-        for h in self.optional_attrs:
-            if h in kwargs:
-                self.digest = kwargs[h]
-
-        self.expand_archive = kwargs.get('expand', True)
-        self.extra_options = kwargs.get('fetch_options', {})
-        self._curl = None
-
-        self.extension = kwargs.get('extension', None)
-
-        if not self.url:
-            raise ValueError("CurlFetchStrategy requires a url for fetching.")
-
-    @property
-    def curl(self):
-        if not self._curl:
-            try:
-                self._curl = which('curl', required=True)
-            except CommandNotFoundError as exc:
-                tty.error(str(exc))
-        return self._curl
-
-    def source_id(self):
-        return self.digest
-
-    def mirror_id(self):
-        if not self.digest:
-            return None
-        # The filename is the digest. A directory is also created based on
-        # truncating the digest to avoid creating a directory with too many
-        # entries
-        return os.path.sep.join(
-            ['archive', self.digest[:2], self.digest])
-
-    @property
-    def candidate_urls(self):
-        return [self.url] + (self.mirrors or [])
-
-    @_needs_stage
-    def fetch(self):
-        if self.archive_file:
-            tty.debug('Already downloaded {0}'.format(self.archive_file))
-            return
-
-        url = None
-        errors = []
-        for url in self.candidate_urls:
-            if not self._existing_url(url):
-                continue
-
-            try:
-                partial_file, save_file = self._fetch_from_url(url)
-                if save_file:
-                    os.rename(partial_file, save_file)
-                break
-            except FetchError as e:
-                errors.append(str(e))
-
-        for msg in errors:
-            tty.debug(msg)
-
-        if not self.archive_file:
-            raise FailedDownloadError(url)
-
-    def _existing_url(self, url):
-        tty.debug('Checking existence of {0}'.format(url))
-        curl = self.curl
-        # Telling curl to fetch the first byte (-r 0-0) is supposed to be
-        # portable.
-        curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
-        _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
-        return curl.returncode == 0
-
-    def _fetch_from_url(self, url):
-        save_file = None
-        partial_file = None
-        if self.stage.save_filename:
-            save_file = self.stage.save_filename
-            partial_file = self.stage.save_filename + '.part'
-        tty.msg('Fetching {0}'.format(url))
-        if partial_file:
-            save_args = ['-C',
-                         '-',  # continue partial downloads
-                         '-o',
-                         partial_file]  # use a .part file
-        else:
-            save_args = ['-O']
-
-        curl_args = save_args + [
-            '-f',  # fail on >400 errors
-            '-D',
-            '-',  # print out HTML headers
-            '-L',  # resolve 3xx redirects
-            url,
-        ]
-
-        if not spack.config.get('config:verify_ssl'):
-            curl_args.append('-k')
-
-        if sys.stdout.isatty() and tty.msg_enabled():
-            curl_args.append('-#')  # status bar when using a tty
-        else:
-            curl_args.append('-sS')  # show errors if fail
-
-        connect_timeout = spack.config.get('config:connect_timeout', 10)
-
-        if self.extra_options:
-            cookie = self.extra_options.get('cookie')
-            if cookie:
-                curl_args.append('-j')  # junk cookies
-                curl_args.append('-b')  # specify cookie
-                curl_args.append(cookie)
-
-            timeout = self.extra_options.get('timeout')
-            if timeout:
-                connect_timeout = max(connect_timeout, int(timeout))
-
-        if connect_timeout > 0:
-            # Timeout if can't establish a connection after n sec.
-            curl_args.extend(['--connect-timeout', str(connect_timeout)])
-
-        # Run curl but grab the mime type from the http headers
-        curl = self.curl
-        with working_dir(self.stage.path):
-            headers = curl(*curl_args, output=str, fail_on_error=False)
-
-        if curl.returncode != 0:
-            # clean up archive on failure.
-            if self.archive_file:
-                os.remove(self.archive_file)
-
-            if partial_file and os.path.exists(partial_file):
-                os.remove(partial_file)
-
-            if curl.returncode == 22:
-                # This is a 404.  Curl will print the error.
-                raise FailedDownloadError(
-                    url, "URL %s was not found!" % url)
-
-            elif curl.returncode == 60:
-                # This is a certificate error.  Suggest spack -k
-                raise FailedDownloadError(
-                    url,
-                    "Curl was unable to fetch due to invalid certificate. "
-                    "This is either an attack, or your cluster's SSL "
-                    "configuration is bad.  If you believe your SSL "
-                    "configuration is bad, you can try running spack -k, "
-                    "which will not check SSL certificates."
-                    "Use this at your own risk.")
-
-            else:
-                # This is some other curl error.  Curl will print the
-                # error, but print a spack message too
-                raise FailedDownloadError(
-                    url,
-                    "Curl failed with error %d" % curl.returncode)
-
-        # Check if we somehow got an HTML file rather than the archive we
-        # asked for.  We only look at the last content type, to handle
-        # redirects properly.
-        content_types = re.findall(r'Content-Type:[^\r\n]+', headers,
-                                   flags=re.IGNORECASE)
-        if content_types and 'text/html' in content_types[-1]:
-            warn_content_type_mismatch(self.archive_file or "the archive")
-        return partial_file, save_file
-
-    @property  # type: ignore # decorated properties unsupported in mypy
-    @_needs_stage
-    def archive_file(self):
-        """Path to the source archive within this stage directory."""
-        return self.stage.archive_file
-
-    @property
-    def cachable(self):
-        return self.cache_enabled and bool(self.digest)
-
-    @_needs_stage
-    def expand(self):
-        if not self.expand_archive:
-            tty.debug('Staging unexpanded archive {0} in {1}'
-                      .format(self.archive_file, self.stage.source_path))
-            if not self.stage.expanded:
-                mkdirp(self.stage.source_path)
-            dest = os.path.join(self.stage.source_path,
-                                os.path.basename(self.archive_file))
-            shutil.move(self.archive_file, dest)
-            return
-
-        tty.debug('Staging archive: {0}'.format(self.archive_file))
-
-        if not self.archive_file:
-            raise NoArchiveFileError(
-                "Couldn't find archive file",
-                "Failed on expand() for URL %s" % self.url)
-
-        if not self.extension:
-            self.extension = extension(self.archive_file)
-
-        if self.stage.expanded:
-            tty.debug('Source already staged to %s' % self.stage.source_path)
-            return
-
-        decompress = decompressor_for(self.archive_file, self.extension)
-
-        # Expand all tarballs in their own directory to contain
-        # exploding tarballs.
-        tarball_container = os.path.join(self.stage.path,
-                                         "spack-expanded-archive")
-
-        mkdirp(tarball_container)
-        with working_dir(tarball_container):
-            decompress(self.archive_file)
-
-        # Check for an exploding tarball, i.e. one that doesn't expand to
-        # a single directory.  If the tarball *didn't* explode, move its
-        # contents to the staging source directory & remove the container
-        # directory.  If the tarball did explode, just rename the tarball
-        # directory to the staging source directory.
-        #
-        # NOTE: The tar program on Mac OS X will encode HFS metadata in
-        # hidden files, which can end up *alongside* a single top-level
-        # directory.  We initially ignore presence of hidden files to
-        # accomodate these "semi-exploding" tarballs but ensure the files
-        # are copied to the source directory.
-        files = os.listdir(tarball_container)
-        non_hidden = [f for f in files if not f.startswith('.')]
-        if len(non_hidden) == 1:
-            src = os.path.join(tarball_container, non_hidden[0])
-            if os.path.isdir(src):
-                self.stage.srcdir = non_hidden[0]
-                shutil.move(src, self.stage.source_path)
-                if len(files) > 1:
-                    files.remove(non_hidden[0])
-                    for f in files:
-                        src = os.path.join(tarball_container, f)
-                        dest = os.path.join(self.stage.path, f)
-                        shutil.move(src, dest)
-                os.rmdir(tarball_container)
-            else:
-                # This is a non-directory entry (e.g., a patch file) so simply
-                # rename the tarball container to be the source path.
-                shutil.move(tarball_container, self.stage.source_path)
-
-        else:
-            shutil.move(tarball_container, self.stage.source_path)
-
-    def archive(self, destination):
-        """Just moves this archive to the destination."""
-        if not self.archive_file:
-            raise NoArchiveFileError("Cannot call archive() before fetching.")
-
-        web_util.push_to_url(
-            self.archive_file,
-            destination,
-            keep_original=True)
-
-    @_needs_stage
-    def check(self):
-        """Check the downloaded archive against a checksum digest.
-           No-op if this stage checks code out of a repository."""
-        if not self.digest:
-            raise NoDigestError(
-                "Attempt to check CurlFetchStrategy with no digest.")
-
-        checker = crypto.Checker(self.digest)
-        if not checker.check(self.archive_file):
-            raise ChecksumError(
-                "%s checksum failed for %s" %
-                (checker.hash_name, self.archive_file),
-                "Expected %s but got %s" % (self.digest, checker.sum))
-
-    @_needs_stage
-    def reset(self):
-        """
-        Removes the source path if it exists, then re-expands the archive.
-        """
-        if not self.archive_file:
-            raise NoArchiveFileError(
-                "Tried to reset CurlFetchStrategy before fetching",
-                "Failed on reset() for URL %s" % self.url)
-
-        # Remove everything but the archive from the stage
-        for filename in os.listdir(self.stage.path):
-            abspath = os.path.join(self.stage.path, filename)
-            if abspath != self.archive_file:
-                shutil.rmtree(abspath, ignore_errors=True)
-
-        # Expand the archive again
-        self.expand()
-
-    def __repr__(self):
-        url = self.url if self.url else "no url"
-        return "%s<%s>" % (self.__class__.__name__, url)
-
-    def __str__(self):
-        if self.url:
-            return self.url
-        else:
-            return "[no url]"
-
-
-@fetcher
 class CacheURLFetchStrategy(URLFetchStrategy):
-    """The resource associated with a cache URL may be out of date."""
-
-    @_needs_stage
-    def fetch(self):
-        path = re.sub('^file://', '', self.url)
-
-        # check whether the cache file exists.
-        if not os.path.isfile(path):
-            raise NoCacheError('No cache of %s' % path)
-
-        # remove old symlink if one is there.
-        filename = self.stage.save_filename
-        if os.path.exists(filename):
-            os.remove(filename)
-
-        # Symlink to local cached archive.
-        os.symlink(path, filename)
-
-        # Remove link if checksum fails, or subsequent fetchers
-        # will assume they don't need to download.
-        if self.digest:
-            try:
-                self.check()
-            except ChecksumError:
-                os.remove(self.archive_file)
-                raise
-
-        # Notify the user how we fetched.
-        tty.msg('Using cached archive: {0}'.format(path))
-
-
-@fetcher
-class CacheCurlFetchStrategy(CurlFetchStrategy):
     """The resource associated with a cache URL may be out of date."""
 
     @_needs_stage
@@ -1472,64 +1237,13 @@ class S3FetchStrategy(URLFetchStrategy):
         if not self.archive_file:
             raise FailedDownloadError(self.url)
 
-@fetcher
-class S3CurlFetchStrategy(CurlFetchStrategy):
-    """FetchStrategy that pulls from an S3 bucket."""
-    url_attr = 's3'
-
-    def __init__(self, *args, **kwargs):
-        try:
-            super(S3CurlFetchStrategy, self).__init__(*args, **kwargs)
-        except ValueError:
-            if not kwargs.get('url'):
-                raise ValueError(
-                    "S3CurlFetchStrategy requires a url for fetching.")
-
-    @_needs_stage
-    def fetch(self):
-        if self.archive_file:
-            tty.debug('Already downloaded {0}'.format(self.archive_file))
-            return
-
-        parsed_url = url_util.parse(self.url)
-        if parsed_url.scheme != 's3':
-            raise FetchError(
-                'S3FetchStrategy can only fetch from s3:// urls.')
-
-        tty.debug('Fetching {0}'.format(self.url))
-
-        basename = os.path.basename(parsed_url.path)
-
-        with working_dir(self.stage.path):
-            _, headers, stream = web_util.read_from_url(self.url)
-
-            with open(basename, 'wb') as f:
-                shutil.copyfileobj(stream, f)
-
-            content_type = web_util.get_header(headers, 'Content-type')
-
-        if content_type == 'text/html':
-            warn_content_type_mismatch(self.archive_file or "the archive")
-
-        if self.stage.save_filename:
-            os.rename(
-                os.path.join(self.stage.path, basename),
-                self.stage.save_filename)
-
-        if not self.archive_file:
-            raise FailedDownloadError(self.url)
-
 
 def stable_target(fetcher):
     """Returns whether the fetcher target is expected to have a stable
        checksum. This is only true if the target is a preexisting archive
        file."""
-    if spack.config.get('config:use_curl'):
-        if isinstance(fetcher, CurlFetchStrategy) and fetcher.cachable:
-            return True
-    else:
-        if isinstance(fetcher, URLFetchStrategy) and fetcher.cachable:
-            return True
+    if isinstance(fetcher, URLFetchStrategy) and fetcher.cachable:
+        return True
     return False
 
 
@@ -1540,8 +1254,6 @@ def from_url(url):
        TODO: make this return appropriate fetch strategies for other
              types of URLs.
     """
-    if spack.config.get('config:use_curl'):
-        return CurlFetchStrategy(url)
     return URLFetchStrategy(url)
 
 
@@ -1612,12 +1324,8 @@ def _check_version_attributes(fetcher, pkg, version):
 def _extrapolate(pkg, version):
     """Create a fetcher from an extrapolated URL for this version."""
     try:
-        if spack.config.get('config:use_curl'):
-            return CurlFetchStrategy(pkg.url_for_version(version),
-                                     fetch_options=pkg.fetch_options)
-        else:
-            return URLFetchStrategy(pkg.url_for_version(version),
-                                    fetch_options=pkg.fetch_options)
+        return URLFetchStrategy(pkg.url_for_version(version),
+                                fetch_options=pkg.fetch_options)
     except spack.package.NoURLError:
         msg = ("Can't extrapolate a URL for version %s "
                "because package %s defines no URLs")
@@ -1673,12 +1381,15 @@ def for_package_version(pkg, version):
 
     # if a version's optional attributes imply a particular fetch
     # strategy, and we have the `url_attr`, then use that strategy.
+    use_curl = spack.config.get('config:use_curl')
     for fetcher in all_strategies:
         if hasattr(pkg, fetcher.url_attr) or fetcher.url_attr == 'url':
             optionals = fetcher.optional_attrs
             if optionals and any(a in args for a in optionals):
-                _check_version_attributes(fetcher, pkg, version)
-                return _from_merged_attrs(fetcher, pkg, version)
+                is_curl = hasattr(fetcher, "is_curl") and fetcher.is_curl
+                if use_curl == is_curl:
+                    _check_version_attributes(fetcher, pkg, version)
+                    return _from_merged_attrs(fetcher, pkg, version)
 
     # if the optional attributes tell us nothing, then use any `url_attr`
     # on the package.  This prefers URL vs. VCS, b/c URLFetchStrategy is
@@ -1711,9 +1422,15 @@ def from_url_scheme(url, *args, **kwargs):
     scheme = parsed_url.scheme
     scheme = scheme_mapping.get(scheme, scheme)
 
+    use_curl = spack.config.get('config:use_curl')
+
     for fetcher in all_strategies:
         url_attr = getattr(fetcher, 'url_attr', None)
         if url_attr and url_attr == scheme:
+            if url_attr == 'url':
+                is_curl = hasattr(fetcher, "is_curl") and fetcher.is_curl
+                if use_curl != is_curl:
+                    continue
             return fetcher(url, *args, **kwargs)
 
     raise ValueError(
@@ -1743,12 +1460,8 @@ def from_list_url(pkg):
                         args.get('checksum'))
 
                 # construct a fetcher
-                if spack.config.get('config:use_curl'):
-                    return CurlFetchStrategy(url_from_list, checksum,
-                                             fetch_options=pkg.fetch_options)
-                else:
-                    return URLFetchStrategy(url_from_list, checksum,
-                                            fetch_options=pkg.fetch_options)
+                return URLFetchStrategy(url_from_list, checksum,
+                                        fetch_options=pkg.fetch_options)
             except KeyError as e:
                 tty.debug(e)
                 tty.msg("Cannot find version %s in url_list" % pkg.version)
@@ -1772,8 +1485,6 @@ class FsCache(object):
         # Don't store things that are already cached.
         if isinstance(fetcher, CacheURLFetchStrategy):
             return
-        if isinstance(fetcher, CacheCurlFetchStrategy):
-            return
 
         dst = os.path.join(self.root, relative_dest)
         mkdirp(os.path.dirname(dst))
@@ -1781,10 +1492,7 @@ class FsCache(object):
 
     def fetcher(self, target_path, digest, **kwargs):
         path = os.path.join(self.root, target_path)
-        if spack.config.get('config:use_curl'):
-            return CacheCurlFetchStrategy(path, digest, **kwargs)
-        else:
-            return CacheURLFetchStrategy(path, digest, **kwargs)
+        return CacheURLFetchStrategy(path, digest, **kwargs)
 
     def destroy(self):
         shutil.rmtree(self.root, ignore_errors=True)

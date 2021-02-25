@@ -9,7 +9,7 @@ import pytest
 from llnl.util.filesystem import mkdirp, touch
 
 from spack.stage import Stage
-from spack.fetch_strategy import CacheURLFetchStrategy, CacheCurlFetchStrategy, NoCacheError
+from spack.fetch_strategy import CacheURLFetchStrategy, NoCacheError
 
 
 @pytest.mark.parametrize('use_curl', [True, False])
@@ -17,10 +17,7 @@ def test_fetch_missing_cache(tmpdir, use_curl):
     """Ensure raise a missing cache file."""
     testpath = str(tmpdir)
 
-    if use_curl:
-        fetcher = CacheCurlFetchStrategy(url='file:///not-a-real-cache-file')
-    else:
-        fetcher = CacheURLFetchStrategy(url='file:///not-a-real-cache-file')
+    fetcher = CacheURLFetchStrategy(url='file:///not-a-real-cache-file')
     with Stage(fetcher, path=testpath):
         with pytest.raises(NoCacheError, match=r'No cache'):
             fetcher.fetch()
@@ -34,10 +31,7 @@ def test_fetch(tmpdir, use_curl):
     touch(cache)
     url = 'file:///{0}'.format(cache)
 
-    if use_curl:
-        fetcher = CacheCurlFetchStrategy(url=url)
-    else:
-        fetcher = CacheURLFetchStrategy(url=url)
+    fetcher = CacheURLFetchStrategy(url=url)
     with Stage(fetcher, path=testpath) as stage:
         source_path = stage.source_path
         mkdirp(source_path)
