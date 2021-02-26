@@ -287,7 +287,7 @@ class URLFetchStrategy(FetchStrategy):
             try:
                 self._curl = which('curl', required=True)
             except CommandNotFoundError as exc:
-                tty.error(str(exc)+"\n==> Spack will use urllib to fetch")
+                tty.error(str(exc) + "\n==> Spack will use urllib to fetch")
                 self._curl = None
         return self._curl
 
@@ -346,14 +346,12 @@ class URLFetchStrategy(FetchStrategy):
         _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
         return curl.returncode == 0
 
-
     def _fetch_from_url(self, url):
         if spack.config.get('config:use_curl'):
             return self._fetch_curl(url)
         else:
             return self._fetch_urllib(url)
 
-          
     @_needs_stage
     def _fetch_urllib(self, url):
         save_file = None
