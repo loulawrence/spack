@@ -298,10 +298,9 @@ def test_missing_curl(tmpdir, monkeypatch):
     testpath = str(tmpdir)
     url = 'http://github.com/spack/spack'
     with spack.config.override('config:use_curl', True):
+        fetcher = fs.URLFetchStrategy(url=url)
+        assert fetcher is not None
         with pytest.raises(TypeError, match='object is not callable'):
-            fetcher = fs.URLFetchStrategy(url=url)
-            assert fetcher is not None
             with Stage(fetcher, path=testpath) as stage:
                 out = stage.fetch()
-
             assert err_fmt.format('curl') in out

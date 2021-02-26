@@ -11,7 +11,6 @@ import inspect
 import llnl.util.filesystem
 import llnl.util.lang
 
-import spack.config
 import spack.error
 import spack.fetch_strategy as fs
 import spack.repo

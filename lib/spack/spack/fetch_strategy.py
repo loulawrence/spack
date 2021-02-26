@@ -269,6 +269,15 @@ class URLFetchStrategy(FetchStrategy):
         if not self.url:
             raise ValueError("URLFetchStrategy requires a url for fetching.")
 
+    @property
+    def curl(self):
+        if not self._curl:
+            try:
+                self._curl = which('curl', required=True)
+            except CommandNotFoundError as exc:
+                tty.error(str(exc))
+        return self._curl
+
     def source_id(self):
         return self.digest
 
@@ -282,15 +291,6 @@ class URLFetchStrategy(FetchStrategy):
             ['archive', self.digest[:2], self.digest])
 
     @property
-    def curl(self):
-        if not self._curl:
-            try:
-                self._curl = which('curl', required=True)
-            except CommandNotFoundError as exc:
-                tty.error(str(exc))
-        return self._curl
-
-    @property
     def candidate_urls(self):
         return [self.url] + (self.mirrors or [])
 
@@ -299,6 +299,7 @@ class URLFetchStrategy(FetchStrategy):
         if self.archive_file:
             tty.debug('Already downloaded {0}'.format(self.archive_file))
             return
+
         url = None
         errors = []
         for url in self.candidate_urls:
@@ -323,9 +324,9 @@ class URLFetchStrategy(FetchStrategy):
         tty.debug('Checking existence of {0}'.format(url))
 
         if spack.config.get('config:use_curl'):
+            curl = self.curl
             # Telling curl to fetch the first byte (-r 0-0) is supposed to be
             # portable.
-            curl = self.curl
             curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
             if not spack.config.get('config:verify_ssl'):
                 curl_args.append('-k')
@@ -428,8 +429,8 @@ class URLFetchStrategy(FetchStrategy):
             # Timeout if can't establish a connection after n sec.
             curl_args.extend(['--connect-timeout', str(connect_timeout)])
 
-        curl = self.curl
         # Run curl but grab the mime type from the http headers
+        curl = self.curl
         with working_dir(self.stage.path):
             headers = curl(*curl_args, output=str, fail_on_error=False)
 
