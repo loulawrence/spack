@@ -287,8 +287,7 @@ class URLFetchStrategy(FetchStrategy):
             try:
                 self._curl = which('curl', required=True)
             except CommandNotFoundError as exc:
-                tty.error(str(exc) + "\n==> Spack will use urllib to fetch")
-                self._curl = None
+                tty.error(str(exc))
         return self._curl
 
     @property
@@ -322,29 +321,24 @@ class URLFetchStrategy(FetchStrategy):
 
     def _existing_url(self, url):
         tty.debug('Checking existence of {0}'.format(url))
-        # Telling urllib to check if url is accessible
-        curl = self.curl
 
-        if spack.config.get('config:use_curl') and curl is not None:
+        if spack.config.get('config:use_curl'):
             # Telling curl to fetch the first byte (-r 0-0) is supposed to be
             # portable.
+            curl = self.curl
             curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
+            if not spack.config.get('config:verify_ssl'):
+                curl_args.append('-k')
             _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
             return curl.returncode == 0
         else:
+            # Telling urllib to check if url is accessible
             try:
                 url, headers, response = web_util.read_from_url(url)
             except web_util.SpackWebError:
                 msg = "Urllib fetch failed to verify url {0}".format(url)
                 raise FailedDownloadError(url, msg)
             return (response.getcode() is None or response.getcode() == 200)
-        # Telling curl to fetch the first byte (-r 0-0) is supposed to be
-        # portable.
-        curl_args = ['--stderr', '-', '-s', '-f', '-r', '0-0', url]
-        if not spack.config.get('config:verify_ssl'):
-            curl_args.append('-k')
-        _ = curl(*curl_args, fail_on_error=False, output=os.devnull)
-        return curl.returncode == 0
 
     def _fetch_from_url(self, url):
         if spack.config.get('config:use_curl'):
@@ -435,8 +429,6 @@ class URLFetchStrategy(FetchStrategy):
             curl_args.extend(['--connect-timeout', str(connect_timeout)])
 
         curl = self.curl
-        if curl is None:
-            return self._fetch_urllib(url)
         # Run curl but grab the mime type from the http headers
         with working_dir(self.stage.path):
             headers = curl(*curl_args, output=str, fail_on_error=False)

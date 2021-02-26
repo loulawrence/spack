@@ -76,8 +76,8 @@ def test_fetch_options(tmpdir, mock_archive):
     testpath = str(tmpdir)
     with spack.config.override('config:use_curl', True):
         fetcher = fs.URLFetchStrategy(url=mock_archive.url,
-                                       fetch_options={'cookie': 'True',
-                                                      'timeout': 10})
+                                      fetch_options={'cookie': 'True',
+                                                     'timeout': 10})
         assert fetcher is not None
 
         with Stage(fetcher, path=testpath) as stage:
@@ -298,7 +298,10 @@ def test_missing_curl(tmpdir, monkeypatch):
     testpath = str(tmpdir)
     url = 'http://github.com/spack/spack'
     with spack.config.override('config:use_curl', True):
-        fetcher = fs.URLFetchStrategy(url=url)
-        assert fetcher is not None
-        with Stage(fetcher, path=testpath) as stage:
-            out = stage.fetch()
+        with pytest.raises(TypeError, match='object is not callable'):
+            fetcher = fs.URLFetchStrategy(url=url)
+            assert fetcher is not None
+            with Stage(fetcher, path=testpath) as stage:
+                out = stage.fetch()
+
+            assert err_fmt.format('curl') in out
