@@ -241,7 +241,6 @@ class URLFetchStrategy(FetchStrategy):
     The destination for the resulting file(s) is the standard stage path.
     """
     url_attr = 'url'
-    is_curl = False
 
     # these are checksum types. The generic 'checksum' is deprecated for
     # specific hash names, but we need it for backward compatibility
@@ -1398,15 +1397,12 @@ def for_package_version(pkg, version):
 
     # if a version's optional attributes imply a particular fetch
     # strategy, and we have the `url_attr`, then use that strategy.
-    use_curl = spack.config.get('config:use_curl')
     for fetcher in all_strategies:
         if hasattr(pkg, fetcher.url_attr) or fetcher.url_attr == 'url':
             optionals = fetcher.optional_attrs
             if optionals and any(a in args for a in optionals):
-                is_curl = hasattr(fetcher, "is_curl") and fetcher.is_curl
-                if use_curl == is_curl:
-                    _check_version_attributes(fetcher, pkg, version)
-                    return _from_merged_attrs(fetcher, pkg, version)
+                _check_version_attributes(fetcher, pkg, version)
+                return _from_merged_attrs(fetcher, pkg, version)
 
     # if the optional attributes tell us nothing, then use any `url_attr`
     # on the package.  This prefers URL vs. VCS, b/c URLFetchStrategy is
@@ -1439,15 +1435,9 @@ def from_url_scheme(url, *args, **kwargs):
     scheme = parsed_url.scheme
     scheme = scheme_mapping.get(scheme, scheme)
 
-    use_curl = spack.config.get('config:use_curl')
-
     for fetcher in all_strategies:
         url_attr = getattr(fetcher, 'url_attr', None)
         if url_attr and url_attr == scheme:
-            if url_attr == 'url':
-                is_curl = hasattr(fetcher, "is_curl") and fetcher.is_curl
-                if use_curl != is_curl:
-                    continue
             return fetcher(url, *args, **kwargs)
 
     raise ValueError(
