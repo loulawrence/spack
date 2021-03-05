@@ -8,6 +8,7 @@
 from __future__ import unicode_literals
 
 import atexit
+import ctypes
 import errno
 import multiprocessing
 import os
@@ -16,6 +17,7 @@ import select
 import sys
 import traceback
 import signal
+import tempfile
 from contextlib import contextmanager
 from six import string_types
 from six import StringIO
@@ -655,6 +657,121 @@ class log_output(object):
         # output. We us these control characters rather than, say, a
         # separate pipe, because they're in-band and assured to appear
         # exactly before and after the text we want to echo.
+        sys.stdout.write(xon)
+        sys.stdout.flush()
+        try:
+            yield
+        finally:
+            sys.stdout.write(xoff)
+            sys.stdout.flush()
+
+
+class logwin32_output(object):
+    def __init__(self, file_like=None, echo=False, debug=0, buffer=False, env=None):
+        self.file_like = file_like
+        self.echo = echo
+        self.debug = debug
+        self.buffer = buffer
+        self.env = env 
+        self._active = False  # used to prevent re-entry
+        # this part needed for libc.fflush and that is needed to capture libc output
+        if sys.version_info < (3, 5):
+            libc = ctypes.CDLL(ctypes.util.find_library('c'))
+        else:
+            if hasattr(sys, 'gettotalrefcount'): # debug build
+                libc = ctypes.CDLL('ucrtbased')
+            else:
+                libc = ctypes.CDLL('api-ms-win-crt-stdio-l1-1-0')
+
+    def __call__(self, file_like=None, echo=None, debug=None, buffer=None):
+        if file_like is not None:
+            self.file_like = file_like
+        if echo is not None:
+            self.echo = echo
+        if debug is not None:
+            self.debug = debug
+        if buffer is not None:
+            self.buffer = buffer
+        return self
+
+    def _redirect_stdout(to_fd):
+        """Redirect stdout to the given file descriptor."""
+        # Flush the C-level buffer stdout
+        libc.fflush(None)   #### CHANGED THIS ARG TO NONE #############
+        # Flush and close sys.stdout - also closes the file descriptor (fd)
+        sys.stdout.close()
+        # Make original_stdout_fd point to the same file as to_fd
+        os.dup2(to_fd, original_stdout_fd)
+        # Create a new sys.stdout that points to the redirected fd
+        sys.stdout = io.TextIOWrapper(os.fdopen(original_stdout_fd, 'wb'))
+
+    def _redirect_stderr(to_fd):
+        """Redirect stdout to the given file descriptor."""
+        # Flush the C-level buffer stdout
+        libc.fflush(None)   #### CHANGED THIS ARG TO NONE #############
+        # Flush and close sys.stdout - also closes the file descriptor (fd)
+        sys.stderr.close()
+        # Make original_stdout_fd point to the same file as to_fd
+        os.dup2(to_fd, original_stderr_fd)
+        # Create a new sys.stdout that points to the redirected fd
+        sys.stderr = io.TextIOWrapper(os.fdopen(original_stderr_fd, 'wb'))
+
+    def __enter__(self):
+        if self._active:
+            raise RuntimeError("Can't re-enter the same log_output!")
+
+        if self.file is None:
+            raise RuntimeError(
+                "file argument must be set by either __init__ or __call__")
+        original_stdout_fd = sys.stdout.fileno()
+        original_stderr_fd = sys.stderr.fileno()
+        self.log_file = FileWrapper(self.file_like)
+
+        # record parent color settings before redirecting.  We do this
+        # because color output depends on whether the *original* stdout
+        # is a TTY.  New stdout won't be a TTY so we force colorization.
+        self._saved_color = tty.color._force_color
+        forced_color = tty.color.get_color_when()
+
+        # also record parent debug settings -- in case the logger is
+        # forcing debug output.
+        self._saved_debug = tty._debug
+        # Save a copy of the original stdout fd in saved_stdout_fd
+        saved_stdout_fd = os.dup(original_stdout_fd)
+        saved_stderr_fd = os.dup(original_stderr_fd)
+        try:
+            # Create a temporary file and redirect stdout to it
+            tfile = tempfile.TemporaryFile(mode='w+b')
+            tfile2 = tempfile.TemporaryFile(mode='w+b')
+            _redirect_stdout(tfile.fileno())
+            _redirect_stderr(tfile2.fileno())
+            # Yield to caller, then redirect stdout back to the saved fd
+            yield
+            _redirect_stdout(saved_stdout_fd)
+            _redirect_stderr(saved_stderr_fd)
+            # Copy contents of temporary file to the given stream
+            tfile.flush()
+            tfile.seek(0, io.SEEK_SET)
+            file_like.write(tfile.read())
+            tfile2.flush()
+            tfile2.seek(0, io.SEEK_SET)
+            file_like.write(tfile2.read())
+        finally:
+            tfile.close()
+            os.close(saved_stdout_fd)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        tty.color._force_color = self._saved_color
+        tty._debug = self._saved_debug
+
+        self._active = False  # safe to enter again
+
+    @contextmanager
+    def force_echo(self):
+        """Context manager to force local echo, even if echo is off."""
+        if not self._active:
+            raise RuntimeError(
+                "Can't call force_echo() outside log_output region!")
         sys.stdout.write(xon)
         sys.stdout.flush()
         try:
