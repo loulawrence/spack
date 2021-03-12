@@ -110,11 +110,13 @@ class winlog:
             raise RuntimeError(
                 "file argument must be set by either __init__ or __call__")
         self.saved_stdout = sys.stdout.fileno()
-        self.saved_stderr = sys.stderr
+        self.new_stdout = os.dup(self.saved_stdout)
+        #ignore stderr until we figure out stdout
+        #self.saved_stderr = sys.stderr.fileno()
 
         self._kill = threading.Event()
         print('I AM HERE')
-        _thread = Thread(target=self.tee_output, args=(self.saved_stdout,))
+        _thread = Thread(target=self.tee_output, args=(self.new_stdout,))
         _thread.daemon = True
         _thread.start()
         print('NOW HERE')
@@ -134,19 +136,19 @@ class winlog:
 
     def tee_output(self, stream_fd):
         print('I AM IN TEE_OUTPUT')
-        with open(stream_fd, 'r') as stream:
-            while True:
-                print('before readline')
-            
+        
+        while True:
+            print('before readline')
+            with open(stream_fd, 'r') as stream:
                 line = stream.readline()
-                if self.echo:
-                    print('echo is on')
-                    stream.write(line)
-                with open(self.filen,"w") as log_file:
-                    log_file.write(line, file=log_file)
-                is_killed = self._kill.wait(.1)
-                if is_killed:
-                    break
+            if self.echo:
+                print('echo is on')
+                stream.write(line)
+            is_killed = self._kill.wait(.1)
+            if is_killed:
+                break
+        with open(self.filen,"w") as log_file:
+                log_file.write(line, file=log_file)
         
         
 f = "build-out.txt"
