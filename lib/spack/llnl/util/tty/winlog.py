@@ -14,6 +14,7 @@ import signal
 import tempfile
 import subprocess
 import threading
+import queue
 from threading import Thread
 from contextlib import contextmanager
 
@@ -111,12 +112,12 @@ class winlog:
                 "file argument must be set by either __init__ or __call__")
         self.saved_stdout = sys.stdout.fileno()
         self.new_stdout = os.dup(self.saved_stdout)
-        #ignore stderr until we figure out stdout
-        #self.saved_stderr = sys.stderr.fileno()
+        self.saved_stderr = sys.stderr.fileno()
+        self.new_stderr = os.dup(self.saved_stderr)
 
         self._kill = threading.Event()
         print('I AM HERE')
-        _thread = Thread(target=self.tee_output, args=(self.new_stdout,))
+        _thread = Thread(target=self.tee_output, args=(self.new_stdout, self.new_stderr))
         _thread.daemon = True
         _thread.start()
         print('NOW HERE')
@@ -134,21 +135,21 @@ class winlog:
             yield line
             line = stream.readline()
 
-    def tee_output(self, stream_fd):
+    def tee_output(self, stdout_fd, stderr_fd):
+        #ignore stderr until we figure out how to read a line
         print('I AM IN TEE_OUTPUT')
-        
-        while True:
-            print('before readline')
-            with open(stream_fd, 'r') as stream:
-                line = stream.readline()
-            if self.echo:
-                print('echo is on')
-                stream.write(line)
-            is_killed = self._kill.wait(.1)
-            if is_killed:
-                break
-        with open(self.filen,"w") as log_file:
-                log_file.write(line, file=log_file)
+       
+        with open(stdout_fd, 'w+') as stream_out:
+            while True:
+                print('before readline')
+                line = stream_out.readline()
+                if self.echo:
+                    stream_out.write(line)
+                with open(self.filen,"w") as log_file:
+                    log_file.write(line)
+                is_killed = self._kill.wait(.1)
+                if is_killed:
+                    break
         
         
 f = "build-out.txt"
